@@ -127,3 +127,7 @@ task clean          # remove build artifacts
 - Sharing the host's `/tmp` exposes anything other processes put there (X11
   sockets, for example). For untrusted programs replace it with a tmpfs as in
   the example above.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
