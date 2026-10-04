@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -28,7 +29,7 @@ Usage:
   box show [-c FILE] <command> [args...]             print the sandbox command line
   box config [-c FILE] [<command>]                   print the effective profile
   box init [-c FILE]                                 write the default config file
-  box clean [<command>]                              delete persistent overlay layers
+  box clean [<command>]                              delete overlay layers and stale /tmp dirs
   box ps [<command>]                                 list running sandboxes
   box version
 
@@ -191,23 +192,66 @@ func cmdInit(argv []string) error {
 }
 
 func cmdClean(argv []string) error {
+	var filter string
+	if len(argv) > 0 {
+		filter = filepath.Base(argv[0])
+	}
 	stateDir, err := config.StateDir()
 	if err != nil {
 		return err
 	}
 	dir := filepath.Join(stateDir, "overlays")
-	if len(argv) > 0 {
-		dir = filepath.Join(dir, filepath.Base(argv[0]))
+	if filter != "" {
+		dir = filepath.Join(dir, filter)
 	}
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		fmt.Println("nothing to clean at", dir)
-		return nil
+	removed := 0
+	if _, err := os.Stat(dir); err == nil {
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
+		fmt.Println("removed", dir)
+		removed++
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	n, err := cleanTmp(filter)
+	if err != nil {
 		return err
 	}
-	fmt.Println("removed", dir)
+	if removed+n == 0 {
+		fmt.Println("nothing to clean")
+	}
 	return nil
+}
+
+// cleanTmp removes private /tmp directories (see sandbox.TmpDir) whose
+// sandbox is no longer running, optionally only those of binary filter. It
+// returns the number of directories removed.
+func cleanTmp(filter string) (int, error) {
+	entries, err := os.ReadDir(sandbox.DefaultTmpRoot)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		i := strings.LastIndex(name, "-")
+		if !e.IsDir() || i <= 0 || (filter != "" && name[:i] != filter) {
+			continue
+		}
+		if pid, err := strconv.Atoi(name[i+1:]); err != nil || procs.IsRunning(pid, name[:i]) {
+			continue
+		}
+		path := filepath.Join(sandbox.DefaultTmpRoot, name)
+		if err := os.RemoveAll(path); err != nil {
+			fmt.Fprintln(os.Stderr, "box: warning:", err)
+			continue
+		}
+		fmt.Println("removed", path)
+		n++
+	}
+	return n, nil
 }
 
 func cmdPs(argv []string) error {

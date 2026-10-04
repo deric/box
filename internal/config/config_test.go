@@ -106,10 +106,16 @@ func TestDefaultTOMLClaude(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := c.Resolve("claude")
-	for _, want := range []string{"$PWD", "/tmp", "?~/.claude", "?~/.claude.json"} {
+	for _, want := range []string{"$PWD", "?~/.claude", "?~/.claude.json"} {
 		if !contains(p.RWBinds, want) {
 			t.Errorf("rw_binds = %v, missing %q", p.RWBinds, want)
 		}
+	}
+	if contains(p.RWBinds, "/tmp") || contains(p.Tmpfs, "/tmp") {
+		t.Errorf("/tmp must come from private_tmp, not rw_binds %v or tmpfs %v", p.RWBinds, p.Tmpfs)
+	}
+	if !p.PrivateTmp {
+		t.Error("private_tmp should be enabled by default")
 	}
 }
 

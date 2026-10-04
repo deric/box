@@ -87,6 +87,7 @@ type Section struct {
 	Tmpfs         []string          `toml:"tmpfs"`
 	Overlays      []Overlay         `toml:"overlays"`
 	DropBinds     []string          `toml:"drop_binds"`
+	PrivateTmp    *bool             `toml:"private_tmp"`
 	Network       *bool             `toml:"network"`
 	Hostname      *string           `toml:"hostname"`
 	NewSession    *bool             `toml:"new_session"`
@@ -113,6 +114,7 @@ type Profile struct {
 	DevBinds      []string          `toml:"dev_binds"`
 	Tmpfs         []string          `toml:"tmpfs"`
 	Overlays      []Overlay         `toml:"overlays"`
+	PrivateTmp    bool              `toml:"private_tmp"`
 	Network       bool              `toml:"network"`
 	Hostname      string            `toml:"hostname"`
 	NewSession    bool              `toml:"new_session"`
@@ -216,6 +218,7 @@ func (c *Config) Resolve(name string) Profile {
 		DevBinds:      mergeList(base.DevBinds, sec.DevBinds, sec.DropBinds),
 		Tmpfs:         mergeList(base.Tmpfs, sec.Tmpfs, sec.DropBinds),
 		Overlays:      mergeOverlays(base.Overlays, sec.Overlays, sec.DropBinds),
+		PrivateTmp:    pick(base.PrivateTmp, sec.PrivateTmp, false),
 		Network:       pick(base.Network, sec.Network, true),
 		Hostname:      pick(base.Hostname, sec.Hostname, ""),
 		NewSession:    pick(base.NewSession, sec.NewSession, false),

@@ -156,3 +156,23 @@ func TestGroupByEnv(t *testing.T) {
 		t.Errorf("unexpected sandbox %+v", s)
 	}
 }
+
+func TestRunning(t *testing.T) {
+	root := t.TempDir()
+	writeProc(t, root, 100, 1, "bwrap", 0, 0, 0, 0, "box:claude", "--", "claude")
+	writeProc(t, root, 200, 1, "bwrap", 0, 0, 0, 0, "bwrap", "--", "flatpak")
+	for _, tc := range []struct {
+		pid  int
+		name string
+		want bool
+	}{
+		{100, "claude", true},
+		{100, "sh", false},
+		{200, "flatpak", false},
+		{300, "claude", false},
+	} {
+		if got := Running(root, "box:", tc.pid, tc.name); got != tc.want {
+			t.Errorf("Running(%d, %q) = %v, want %v", tc.pid, tc.name, got, tc.want)
+		}
+	}
+}

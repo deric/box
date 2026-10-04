@@ -124,6 +124,63 @@ func TestBuildTmpOverlayAndNoNetwork(t *testing.T) {
 	}
 }
 
+func TestBuildPrivateTmp(t *testing.T) {
+	home, cwd, _, bin := fixture(t)
+	root := filepath.Join(filepath.Dir(home), "tmp", "box")
+	if err := os.Mkdir(filepath.Dir(root), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prof := config.Profile{PrivateTmp: true, Tmpfs: []string{"/tmp"}}
+	plan, err := buildBwrap(prof, Options{
+		Binary: "tool", Cwd: cwd, Home: home, TmpRoot: root, ID: "42",
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "tool-42")
+	if plan.TmpDir != want {
+		t.Errorf("TmpDir = %q, want %q", plan.TmpDir, want)
+	}
+	cmd := " " + strings.Join(plan.Args, " ") + " "
+	if !strings.Contains(cmd, " --bind "+want+" /tmp ") {
+		t.Errorf("missing private /tmp bind in\n%s", cmd)
+	}
+	if strings.Index(cmd, " --tmpfs /tmp ") > strings.Index(cmd, " --bind "+want) {
+		t.Error("the private /tmp bind must come after a tmpfs on /tmp so it wins")
+	}
+
+	// Exec creates the root shared like /tmp and the directory itself fresh,
+	// clearing anything left behind by an earlier process with the same PID.
+	if err := makeTmpDir(want); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(root); err != nil || fi.Mode()&os.ModeSticky == 0 || fi.Mode().Perm() != 0o777 {
+		t.Errorf("want sticky world-writable %s, got %v, %v", root, fi.Mode(), err)
+	}
+	if err := os.WriteFile(filepath.Join(want, "stale"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeTmpDir(want); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(want); err != nil || len(entries) != 0 {
+		t.Errorf("want empty %s, got %v, %v", want, entries, err)
+	}
+
+	// Default when private_tmp is off: no bind, no directory.
+	plan, err = buildBwrap(config.Profile{}, Options{
+		Binary: "tool", Cwd: cwd, Home: home,
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.TmpDir != "" || strings.Contains(" "+strings.Join(plan.Args, " ")+" ", " /tmp ") {
+		t.Errorf("unexpected /tmp handling: %q %v", plan.TmpDir, plan.Args)
+	}
+}
+
 func TestBuildUnknownCommand(t *testing.T) {
 	_, err := buildBwrap(config.Profile{}, Options{
 		Binary: "nope", Cwd: "/", Home: "/",

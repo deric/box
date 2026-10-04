@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -23,8 +24,23 @@ type Options struct {
 	Cwd      string   // host working directory; defaults to os.Getwd()
 	Home     string   // host home directory; defaults to os.UserHomeDir()
 	StateDir string   // root for persistent overlay layers
+	// TmpRoot holds the private /tmp directories; defaults to DefaultTmpRoot.
+	TmpRoot string
+	// ID identifies this sandbox in TmpRoot; defaults to the current PID,
+	// which bwrap keeps because box replaces itself with it.
+	ID string
 	// Lookup resolves the command on the host. Defaults to exec.LookPath.
 	Lookup func(string) (string, error)
+}
+
+// DefaultTmpRoot is the host directory under which private /tmp directories
+// are created, one per sandbox (see TmpDir).
+const DefaultTmpRoot = "/tmp/box"
+
+// TmpDir returns the host directory mounted as /tmp inside the sandbox for
+// binary name with the given id: <root>/<name>-<id>.
+func TmpDir(root, name, id string) string {
+	return filepath.Join(root, name+"-"+id)
 }
 
 type mountKind int
@@ -69,6 +85,9 @@ type Plan struct {
 	Warnings []string
 	// Dirs lists directories that must exist before running (overlay layers).
 	Dirs []string
+	// TmpDir is the host directory mounted as /tmp (private_tmp); it is
+	// created fresh before running.
+	TmpDir string
 	// Dir, ClearEnv, UnsetEnv and Env set up the runner's own working
 	// directory and environment, for runners that cannot do it themselves.
 	// Env holds KEY=VALUE pairs.
@@ -109,6 +128,11 @@ func (p *Plan) Exec() error {
 			return err
 		}
 	}
+	if p.TmpDir != "" {
+		if err := makeTmpDir(p.TmpDir); err != nil {
+			return err
+		}
+	}
 	if p.Dir != "" {
 		if err := os.Chdir(p.Dir); err != nil {
 			return err
@@ -116,6 +140,35 @@ func (p *Plan) Exec() error {
 	}
 	argv := append([]string{ProcTitlePrefix + p.Name}, p.Args...)
 	return syscall.Exec(p.Exe, argv, p.environ())
+}
+
+// makeTmpDir creates the private /tmp directory. Its parent is shared by all
+// users like /tmp itself, so it is created world-writable with the sticky
+// bit and must be a real directory that is either ours or sticky. A
+// directory left behind by an earlier process with the same PID is cleared.
+func makeTmpDir(dir string) error {
+	parent := filepath.Dir(dir)
+	if err := os.Mkdir(parent, 0o777); err == nil {
+		if err := os.Chmod(parent, 0o777|os.ModeSticky); err != nil {
+			return err
+		}
+	} else if !os.IsExist(err) {
+		return err
+	}
+	fi, err := os.Lstat(parent)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory", parent)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() && fi.Mode()&os.ModeSticky == 0 {
+		return fmt.Errorf("%s is owned by another user and not sticky", parent)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	return os.Mkdir(dir, 0o700)
 }
 
 func (p *Plan) environ() []string {
@@ -174,7 +227,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 	add := func(m *mount) {
 		m.dest = filepath.Clean(m.dest)
 		for _, o := range mounts {
-			if o.kind == m.kind && o.dest == m.dest {
+			if o.kind == m.kind && o.dest == m.dest && o.src == m.src {
 				return // e.g. /tmp and $TMPDIR resolving to the same path
 			}
 		}
@@ -205,6 +258,14 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			dest = realPath(dest)
 		}
 		add(&mount{kind: kindTmpfs, dest: dest})
+	}
+	if prof.PrivateTmp {
+		if resolveLinks {
+			plan.Warnings = append(plan.Warnings, "private_tmp is not supported on this platform; ignored")
+		} else {
+			plan.TmpDir = TmpDir(opts.TmpRoot, plan.Name, opts.ID)
+			add(&mount{kind: kindRW, src: plan.TmpDir, dest: "/tmp", visible: true})
+		}
 	}
 	for _, o := range prof.Overlays {
 		src, optional := exp(o.Path)
@@ -287,6 +348,12 @@ func fillDefaults(o *Options) error {
 	}
 	if o.Lookup == nil {
 		o.Lookup = exec.LookPath
+	}
+	if o.TmpRoot == "" {
+		o.TmpRoot = DefaultTmpRoot
+	}
+	if o.ID == "" {
+		o.ID = strconv.Itoa(os.Getpid())
 	}
 	return nil
 }

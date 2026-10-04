@@ -17,7 +17,7 @@ ro_binds = [
 ]
 
 # Host paths mounted read-write.
-rw_binds = ["$PWD", "/tmp"]
+rw_binds = ["$PWD"]
 
 # Device paths mounted read-write with device access (e.g. "/dev/dri").
 dev_binds = []
@@ -25,6 +25,13 @@ dev_binds = []
 # Fresh tmpfs mounts. $HOME is a tmpfs so stray writes vanish on exit while
 # the explicitly listed paths underneath it stay visible.
 tmpfs = ["$HOME", "/var/tmp"]
+
+# Give each sandbox its own /tmp: a fresh host directory
+# /tmp/box/<binary>-<pid> is mounted as /tmp inside, so nothing other host
+# processes put in /tmp (X11 sockets, ...) is exposed, while the files stay
+# inspectable from the host. `box clean` removes directories of sandboxes
+# that have exited.
+private_tmp = true
 
 # Overlay mounts: the host directory is visible underneath, writes go to an
 # upper layer and never touch the host. With persist = true the upper layer is
@@ -67,7 +74,9 @@ rw_binds = ["?~/.claude", "?~/.claude.json"]
 
 # Example per-binary sections:
 #
+# [binaries.trusted-tool]
+# private_tmp = false
+# rw_binds = ["/tmp"]      # share the host's /tmp instead
+#
 # [binaries.untrusted-tool]
 # network = false
-# drop_binds = ["/tmp"]
-# tmpfs = ["/tmp"]

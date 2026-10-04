@@ -17,7 +17,7 @@ box run claude --some-flag      # run claude sandboxed
 box show claude                 # print the sandbox command line without running it
 box config claude               # print the effective, merged profile
 box init                            # write the default ~/.config/box/box.toml
-box clean claude                # drop claude's persistent overlay layers
+box clean claude                # drop claude's overlay layers and stale private /tmp dirs
 box ps                          # list running sandboxes with process count, CPU, memory
 ```
 
@@ -27,7 +27,8 @@ box ps                          # list running sandboxes with process count, CPU
 |----------------------------------|------------------------------------------------------|
 | `/usr`, `/bin`, `/lib*`, `/etc`  | read-only (merged-/usr symlinks are recreated)       |
 | current directory                | read-write                                           |
-| `/tmp`                           | read-write                                           |
+| `/tmp`                           | private: a fresh host dir `/tmp/box/<name>-<pid>`    |
+| `/var/tmp`                       | empty tmpfs                                          |
 | `$HOME`                          | empty tmpfs; only listed paths underneath are visible |
 | `~/.local/share/mise`            | overlay: host content visible, writes land in a per-binary upper layer under `~/.local/state/box/overlays/` |
 | network                          | shared with the host                                 |
@@ -47,8 +48,9 @@ values are **appended** to the defaults, scalar values **replace** them, and
 ```toml
 [default]
 ro_binds = ["/bin", "/sbin", "/lib", "?/lib32", "/lib64", "/usr", "/etc", "?/opt"]
-rw_binds = ["$PWD", "/tmp"]
+rw_binds = ["$PWD"]
 tmpfs    = ["$HOME", "/var/tmp"]
+private_tmp = true
 overlays = [{ path = "~/.local/share/mise", persist = true }]
 network  = true
 hostname = "box"
@@ -57,10 +59,12 @@ env      = { BOX_SANDBOX = "1" }
 [binaries.claude]
 rw_binds = ["?~/.claude", "?~/.claude.json"]
 
+[binaries.trusted-tool]
+private_tmp = false          # share the host's /tmp instead
+rw_binds    = ["/tmp"]
+
 [binaries.untrusted-tool]
 network    = false
-drop_binds = ["/tmp"]
-tmpfs      = ["/tmp"]
 inherit    = true            # set false to ignore [default] entirely
 ```
 
@@ -105,6 +109,7 @@ the Linux sandbox as closely as Seatbelt allows:
 | unmounted paths are absent            | unlisted paths are denied; `stat` still works everywhere so path resolution does |
 | `tmpfs`: empty, writable, discarded   | hidden: contents can be neither read nor written              |
 | `overlays`                            | read-only (with a warning)                                    |
+| `private_tmp`: own `/tmp` directory   | not supported (warned and ignored)                            |
 | `network = false`: own empty netns    | no IP traffic at all, loopback included                       |
 | Unix sockets under mounted paths      | Unix sockets under exposed paths                              |
 | PID / IPC namespaces                  | processes may only inspect and signal their own sandbox; Mach services are limited to a short list (name lookup, logging, and with network: DNS and TLS trust) |
@@ -164,9 +169,16 @@ task clean          # remove build artifacts
   its sandboxes; stats cover the whole process tree under that bwrap.
 - Mounts are applied parents-first, so a tmpfs on `$HOME` never hides a bind
   or overlay placed underneath it.
-- Sharing the host's `/tmp` exposes anything other processes put there (X11
-  sockets, for example). For untrusted programs replace it with a tmpfs as in
-  the example above.
+- With `private_tmp` (the Linux default) each sandbox gets a fresh host
+  directory `/tmp/box/<name>-<pid>` mounted as `/tmp`, where `<pid>` is the
+  PID `box ps` shows. Nothing other host processes put in `/tmp` (X11
+  sockets, for example) is exposed, while the sandbox's temporary files stay
+  inspectable from the host. Because `box` execs into `bwrap` nothing removes
+  the directory on exit; `box clean` deletes those whose sandbox is gone, and
+  a leftover from a reused PID is cleared before the next run. To share the
+  host's `/tmp` instead, set `private_tmp = false` and add `/tmp` to
+  `rw_binds` as in the example above. Seatbelt cannot remount paths, so the
+  option is ignored on macOS.
 
 ## License
 

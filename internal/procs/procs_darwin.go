@@ -28,3 +28,7 @@ func Sandboxes() ([]Sandbox, error) {
 	}
 	return group(all, envTag(sandbox.NameEnv, sandbox.DirEnv)), nil
 }
+
+// IsRunning reports whether pid is a live box sandbox for binary name. Only
+// Linux sandboxes own private /tmp directories, so nothing is running here.
+func IsRunning(int, string) bool { return false }

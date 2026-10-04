@@ -74,6 +74,18 @@ func List(root, prefix string) ([]Sandbox, error) {
 	}), nil
 }
 
+// Running reports whether pid is a live sandbox for binary name: a process
+// whose argv[0] is prefix+name. Unlike List it also recognizes a sandbox
+// nested inside another one. root is the procfs mount point.
+func Running(root, prefix string, pid int, name string) bool {
+	cmdline, err := os.ReadFile(filepath.Join(root, strconv.Itoa(pid), "cmdline"))
+	if err != nil {
+		return false
+	}
+	argv0, _, _ := bytes.Cut(cmdline, []byte{0})
+	return string(argv0) == prefix+name
+}
+
 // group builds one Sandbox per process tree whose root is tagged and has an
 // untagged parent, summing usage over the whole tree. tag reports whether a
 // process is tagged and fills in Name, Command and Dir.
