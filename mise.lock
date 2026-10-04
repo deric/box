@@ -7,3 +7,7 @@ backend = "core:go"
 [[tools.task]]
 version = "3.52.0"
 backend = "aqua:go-task/task"
+
+[[tools.golangci-lint]]
+version = "2.14.0"
+backend = "aqua:golangci/golangci-lint"

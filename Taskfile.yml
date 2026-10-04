@@ -52,16 +52,9 @@ tasks:
       - go vet ./...
 
   lint:
-    desc: Check formatting and run go vet
+    desc: Run golangci-lint (same checks as CI)
     cmds:
-      - |
-        unformatted=$(gofmt -s -l .)
-        if [ -n "$unformatted" ]; then
-          echo "unformatted files:" >&2
-          echo "$unformatted" >&2
-          exit 1
-        fi
-      - task: vet
+      - golangci-lint run ./...
 
   check:
     desc: Lint, test and build
