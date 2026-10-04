@@ -17,6 +17,7 @@ box show claude                 # print the bwrap command line without running i
 box config claude               # print the effective, merged profile
 box init                            # write the default ~/.config/box/box.toml
 box clean claude                # drop claude's persistent overlay layers
+box ps                          # list running sandboxes with process count, CPU, memory
 ```
 
 ## Defaults
@@ -122,6 +123,8 @@ task clean          # remove build artifacts
 
 - `box` replaces itself with `bwrap` via `exec`, so signals and the terminal
   behave as if the program ran directly.
+- `box` sets bwrap's `argv[0]` to `box:<name>`, which is how `box ps` finds
+  its sandboxes; stats cover the whole process tree under that bwrap.
 - Mounts are applied parents-first, so a tmpfs on `$HOME` never hides a bind
   or overlay placed underneath it.
 - Sharing the host's `/tmp` exposes anything other processes put there (X11

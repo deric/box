@@ -45,8 +45,14 @@ type mount struct {
 	visible bool // true for binds and overlays: dest exposes host content
 }
 
+// ProcTitlePrefix starts argv[0] of every bwrap process started by Exec,
+// followed by the sandboxed binary's base name. It lets `box ps` tell box
+// sandboxes apart from other bwrap users.
+const ProcTitlePrefix = "box:"
+
 // Plan is a fully computed bwrap invocation.
 type Plan struct {
+	Name     string   // base name of the sandboxed binary
 	Bwrap    string   // path to the bwrap executable
 	Args     []string // bwrap arguments, without argv[0]
 	Warnings []string
@@ -65,14 +71,14 @@ func (p *Plan) Command() string {
 }
 
 // Exec creates any required directories and replaces the current process
-// with bwrap. It only returns on error.
+// with bwrap, tagging argv[0] with ProcTitlePrefix. It only returns on error.
 func (p *Plan) Exec() error {
 	for _, d := range p.Dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
 		}
 	}
-	argv := append([]string{"bwrap"}, p.Args...)
+	argv := append([]string{ProcTitlePrefix + p.Name}, p.Args...)
 	return syscall.Exec(p.Bwrap, argv, os.Environ())
 }
 
@@ -89,7 +95,8 @@ func Build(prof config.Profile, opts Options) (*Plan, error) {
 		return nil, fmt.Errorf("bwrap not found in PATH: install bubblewrap")
 	}
 
-	plan := &Plan{Bwrap: bwrap}
+	name := filepath.Base(opts.Binary)
+	plan := &Plan{Name: name, Bwrap: bwrap}
 	exp := expander(opts)
 	var mounts []*mount
 	add := func(m *mount) {
@@ -117,7 +124,6 @@ func Build(prof config.Profile, opts Options) (*Plan, error) {
 		dest, _ := exp(p)
 		add(&mount{kind: kindTmpfs, dest: dest})
 	}
-	name := filepath.Base(opts.Binary)
 	for _, o := range prof.Overlays {
 		src, optional := exp(o.Path)
 		fi, err := os.Stat(src)

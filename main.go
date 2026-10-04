@@ -7,10 +7,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
 	"box/internal/config"
+	"box/internal/procs"
 	"box/internal/sandbox"
 )
 
@@ -24,6 +28,7 @@ Usage:
   box config [-c FILE] [<command>]                   print the effective profile
   box init [-c FILE]                                 write the default config file
   box clean [<command>]                              delete persistent overlay layers
+  box ps [<command>]                                 list running sandboxes
   box version
 
 Flags:
@@ -49,6 +54,8 @@ func main() {
 		err = cmdInit(os.Args[2:])
 	case "clean":
 		err = cmdClean(os.Args[2:])
+	case "ps":
+		err = cmdPs(os.Args[2:])
 	case "version", "--version":
 		fmt.Println("box", version)
 	case "help", "-h", "--help":
@@ -200,4 +207,55 @@ func cmdClean(argv []string) error {
 	}
 	fmt.Println("removed", dir)
 	return nil
+}
+
+func cmdPs(argv []string) error {
+	list, err := procs.List("/proc", sandbox.ProcTitlePrefix)
+	if err != nil {
+		return err
+	}
+	var filter string
+	if len(argv) > 0 {
+		filter = filepath.Base(argv[0])
+	}
+	now := time.Now()
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "PID\tNAME\tPROCS\tCPU\tMEM\tUPTIME\tDIR\tCOMMAND")
+	for _, s := range list {
+		if filter != "" && s.Name != filter {
+			continue
+		}
+		fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
+			s.PID, s.Name, s.Procs, formatDuration(s.CPU), formatBytes(s.RSS),
+			formatDuration(now.Sub(s.Started)), s.Dir, strings.Join(s.Command, " "))
+	}
+	return w.Flush()
+}
+
+// formatDuration renders d compactly at whole-second precision: 45s, 3m07s,
+// 2h05m, 3d04h.
+func formatDuration(d time.Duration) string {
+	s := int64(d / time.Second)
+	switch {
+	case s < 60:
+		return fmt.Sprintf("%ds", s)
+	case s < 3600:
+		return fmt.Sprintf("%dm%02ds", s/60, s%60)
+	case s < 86400:
+		return fmt.Sprintf("%dh%02dm", s/3600, s%3600/60)
+	}
+	return fmt.Sprintf("%dd%02dh", s/86400, s%86400/3600)
+}
+
+func formatBytes(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%dB", n)
+	}
+	div, exp := uint64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }

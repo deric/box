@@ -4,10 +4,115 @@
 version = "1.26.6"
 backend = "core:go"
 
-[[tools.task]]
-version = "3.52.0"
-backend = "aqua:go-task/task"
+[tools.go."platforms.linux-arm64"]
+checksum = "sha256:d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e"
+url = "https://dl.google.com/go/go1.26.6.linux-arm64.tar.gz"
+
+[tools.go."platforms.linux-arm64-musl"]
+checksum = "sha256:d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e"
+url = "https://dl.google.com/go/go1.26.6.linux-arm64.tar.gz"
+
+[tools.go."platforms.linux-x64"]
+checksum = "sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89"
+url = "https://dl.google.com/go/go1.26.6.linux-amd64.tar.gz"
+
+[tools.go."platforms.linux-x64-musl"]
+checksum = "sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89"
+url = "https://dl.google.com/go/go1.26.6.linux-amd64.tar.gz"
+
+[tools.go."platforms.macos-arm64"]
+checksum = "sha256:2dc95ce4675829f2df0e86b28bcef3283635902062a5f0580ca659bf570f3204"
+url = "https://dl.google.com/go/go1.26.6.darwin-arm64.tar.gz"
+
+[tools.go."platforms.macos-x64"]
+checksum = "sha256:08b65a63f244115121ced6c3b55ad38d801a7442acad5c949a17aad84ae6d684"
+url = "https://dl.google.com/go/go1.26.6.darwin-amd64.tar.gz"
+
+[tools.go."platforms.windows-x64"]
+checksum = "sha256:5b6c5b556525810463b5c897b50dc7a82d6a3dc0bfaf55d990a7e9f31d6b2318"
+url = "https://dl.google.com/go/go1.26.6.windows-amd64.zip"
 
 [[tools.golangci-lint]]
 version = "2.14.0"
 backend = "aqua:golangci/golangci-lint"
+
+[tools.golangci-lint."platforms.linux-arm64"]
+checksum = "sha256:ee7ec5f3453d15ddf106fae5a4d6c71737712348a979d1fe9cd52ec7ea299bae"
+url = "https://github.com/golangci/golangci-lint/releases/download/v2.14.0/golangci-lint-2.14.0-linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/585813674"
+provenance = "github-attestations"
+
+[tools.golangci-lint."platforms.linux-arm64-musl"]
+checksum = "sha256:ee7ec5f3453d15ddf106fae5a4d6c71737712348a979d1fe9cd52ec7ea299bae"
+url = "https://github.com/golangci/golangci-lint/releases/download/v2.14.0/golangci-lint-2.14.0-linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/585813674"
+provenance = "github-attestations"
+
+[tools.golangci-lint."platforms.linux-x64"]
+checksum = "sha256:ab90aeb7b066f92a33415b638a50fe5344bbb75a0d32ad30cc248d88f81032ab"
+url = "https://github.com/golangci/golangci-lint/releases/download/v2.14.0/golangci-lint-2.14.0-linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/585813815"
+provenance = "github-attestations"
+
+[tools.golangci-lint."platforms.linux-x64-musl"]
+checksum = "sha256:ab90aeb7b066f92a33415b638a50fe5344bbb75a0d32ad30cc248d88f81032ab"
+url = "https://github.com/golangci/golangci-lint/releases/download/v2.14.0/golangci-lint-2.14.0-linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/585813815"
+provenance = "github-attestations"
+
+[tools.golangci-lint."platforms.macos-arm64"]
+checksum = "sha256:5ef5f36a7147e91dc58ef9ef4d11bb7bad5ead0c76eb6c01327a73c641d1dcc3"
+url = "https://github.com/golangci/golangci-lint/releases/download/v2.14.0/golangci-lint-2.14.0-darwin-arm64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/585813591"
+provenance = "github-attestations"
+
+[tools.golangci-lint."platforms.macos-x64"]
+checksum = "sha256:a5667c1c3536be1740133213e1e822bfb8f0d98ea12903174d6d5f635e4ed68d"
+url = "https://github.com/golangci/golangci-lint/releases/download/v2.14.0/golangci-lint-2.14.0-darwin-amd64.tar.gz"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/585813755"
+provenance = "github-attestations"
+
+[tools.golangci-lint."platforms.windows-x64"]
+checksum = "sha256:b15f903d1649283a2ab6e8d2f0c317eaf1f9f6b3763950e7e8b7e72a43dd724f"
+url = "https://github.com/golangci/golangci-lint/releases/download/v2.14.0/golangci-lint-2.14.0-windows-amd64.zip"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/585813793"
+provenance = "github-attestations"
+
+[[tools.task]]
+version = "3.52.0"
+backend = "aqua:go-task/task"
+
+[tools.task."platforms.linux-arm64"]
+checksum = "sha256:7e0044108830cec0534577b289564e3b7c83e6df276feb631a1edc63d04e4ebe"
+url = "https://github.com/go-task/task/releases/download/v3.52.0/task_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/go-task/task/releases/assets/464613352"
+
+[tools.task."platforms.linux-arm64-musl"]
+checksum = "sha256:7e0044108830cec0534577b289564e3b7c83e6df276feb631a1edc63d04e4ebe"
+url = "https://github.com/go-task/task/releases/download/v3.52.0/task_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/go-task/task/releases/assets/464613352"
+
+[tools.task."platforms.linux-x64"]
+checksum = "sha256:02c679ffae53dca791804847d78b31731615894e292948397c971c87ac9e95bd"
+url = "https://github.com/go-task/task/releases/download/v3.52.0/task_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/go-task/task/releases/assets/464613330"
+
+[tools.task."platforms.linux-x64-musl"]
+checksum = "sha256:02c679ffae53dca791804847d78b31731615894e292948397c971c87ac9e95bd"
+url = "https://github.com/go-task/task/releases/download/v3.52.0/task_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/go-task/task/releases/assets/464613330"
+
+[tools.task."platforms.macos-arm64"]
+checksum = "sha256:debfa9a3bc06fcb5d5550b44725ecd22bb305499ce057bd6d7a774db5cdaa7b8"
+url = "https://github.com/go-task/task/releases/download/v3.52.0/task_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/go-task/task/releases/assets/464613319"
+
+[tools.task."platforms.macos-x64"]
+checksum = "sha256:416348147bc2f1c729417249d932add7894fb01a126128778195942c249d7c0b"
+url = "https://github.com/go-task/task/releases/download/v3.52.0/task_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/go-task/task/releases/assets/464613314"
+
+[tools.task."platforms.windows-x64"]
+checksum = "sha256:e3bd4439b445f4f135758a2666ec8b33ccde789f7f615309c58f116b0e566e79"
+url = "https://github.com/go-task/task/releases/download/v3.52.0/task_windows_amd64.zip"
+url_api = "https://api.github.com/repos/go-task/task/releases/assets/464613286"
