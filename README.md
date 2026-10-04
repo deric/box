@@ -89,6 +89,22 @@ Locations: config at `$BOX_CONFIG`, else `$XDG_CONFIG_HOME/box/box.toml`, else
   Overlays need a non-setuid `bwrap` and a kernel with unprivileged overlayfs (≥ 5.11).
 - Go 1.26 to build: `go build -o box .`
 
+## Development
+
+Tools are pinned in `mise.toml` (`mise install` sets up Go and
+[Task](https://taskfile.dev)). Common tasks:
+
+```sh
+task build          # build ./box with the git version baked in
+task test           # go test ./...
+task lint           # gofmt check + go vet
+task check          # lint, test, build
+task smoke          # run a probe inside a real sandbox
+task run -- show sh # build, then run box with the given arguments
+task install        # copy the binary to ~/.local/bin (override with INSTALL_DIR=...)
+task clean          # remove build artifacts
+```
+
 ## Notes
 
 - `box` replaces itself with `bwrap` via `exec`, so signals and the terminal

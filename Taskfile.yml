@@ -1,0 +1,101 @@
+# https://taskfile.dev
+version: "3"
+
+vars:
+  BIN: box
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  LDFLAGS: -s -w -X main.version={{.VERSION}}
+  INSTALL_DIR: '{{.INSTALL_DIR | default (joinPath (env "HOME") ".local/bin")}}'
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the box binary
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+      - internal/config/default.toml
+    generates:
+      - "{{.BIN}}"
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.BIN}} .
+
+  run:
+    desc: Build and run box with the given arguments (task run -- show sh)
+    deps: [build]
+    cmds:
+      - ./{{.BIN}} {{.CLI_ARGS}}
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - go test ./... {{.CLI_ARGS}}
+
+  test:verbose:
+    desc: Run unit tests with verbose output
+    cmds:
+      - go test -v ./...
+
+  fmt:
+    desc: Format Go sources
+    cmds:
+      - gofmt -s -w .
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: Check formatting and run go vet
+    cmds:
+      - |
+        unformatted=$(gofmt -s -l .)
+        if [ -n "$unformatted" ]; then
+          echo "unformatted files:" >&2
+          echo "$unformatted" >&2
+          exit 1
+        fi
+      - task: vet
+
+  check:
+    desc: Lint, test and build
+    cmds:
+      - task: lint
+      - task: test
+      - task: build
+
+  tidy:
+    desc: Tidy go.mod and go.sum
+    cmds:
+      - go mod tidy
+
+  install:
+    desc: Install box into INSTALL_DIR (default ~/.local/bin)
+    deps: [build]
+    cmds:
+      - mkdir -p {{.INSTALL_DIR}}
+      - install -m 0755 {{.BIN}} {{.INSTALL_DIR}}/{{.BIN}}
+      - echo "installed {{.INSTALL_DIR}}/{{.BIN}}"
+
+  smoke:
+    desc: Run a quick end-to-end check inside a real sandbox
+    deps: [build]
+    cmds:
+      - |
+        ./{{.BIN}} run sh -c '
+          echo "sandboxed as $(id -un)@$(hostname) in $PWD"
+          if touch /usr/x 2>/dev/null; then echo "FAIL: /usr is writable" >&2; exit 1; fi
+          echo "/usr read-only: ok"
+        '
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -f {{.BIN}}
+      - rm -rf dist
