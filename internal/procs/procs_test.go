@@ -157,6 +157,17 @@ func TestGroupByEnv(t *testing.T) {
 	}
 }
 
+func TestParseArgsSkipsForwarder(t *testing.T) {
+	cmd, dir := parseArgs([]string{"--chdir", "/w", "--", "/usr/bin/box", "_forward", "-s", "/run/box/proxy.sock", "-l", "127.0.0.1:3128", "--", "claude", "--resume"})
+	if !slices.Equal(cmd, []string{"claude", "--resume"}) || dir != "/w" {
+		t.Errorf("got %q, %q", cmd, dir)
+	}
+	cmd, _ = parseArgs([]string{"--", "sh", "-c", "box _forward -- x"})
+	if !slices.Equal(cmd, []string{"sh", "-c", "box _forward -- x"}) {
+		t.Errorf("plain command mangled: %q", cmd)
+	}
+}
+
 func TestRunning(t *testing.T) {
 	root := t.TempDir()
 	writeProc(t, root, 100, 1, "bwrap", 0, 0, 0, 0, "box:claude", "--", "claude")

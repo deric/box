@@ -20,6 +20,9 @@ import (
 	"box/internal/sandbox"
 )
 
+// The _proxy and _forward commands are started by box itself (see
+// internal/proxy) and are not part of the documented interface.
+
 var version = "dev"
 
 const usage = `box - run programs inside a sandbox (bwrap on Linux, sandbox-exec on macOS)
@@ -58,6 +61,10 @@ func main() {
 		err = cmdClean(os.Args[2:])
 	case "ps":
 		err = cmdPs(os.Args[2:])
+	case "_proxy":
+		err = cmdProxy(os.Args[2:])
+	case "_forward":
+		err = cmdForward(os.Args[2:])
 	case "version", "--version":
 		fmt.Println("box", version)
 	case "help", "-h", "--help":
@@ -132,10 +139,16 @@ func cmdRun(argv []string, dryRun bool) error {
 		fmt.Fprintln(os.Stderr, "box: warning:", w)
 	}
 	if dryRun {
+		if pc := plan.ProxyCommand(); pc != "" {
+			fmt.Println("# started on the host first:", pc)
+		}
 		fmt.Println(plan.Command())
 		return nil
 	}
 	if verbose {
+		if pc := plan.ProxyCommand(); pc != "" {
+			fmt.Fprintln(os.Stderr, "box:", pc)
+		}
 		fmt.Fprintln(os.Stderr, "box:", plan.Command())
 	}
 	return plan.Exec()
@@ -222,9 +235,10 @@ func cmdClean(argv []string) error {
 	return nil
 }
 
-// cleanTmp removes private /tmp directories (see sandbox.TmpDir) whose
-// sandbox is no longer running, optionally only those of binary filter. It
-// returns the number of directories removed.
+// cleanTmp removes private /tmp directories (see sandbox.TmpDir) and proxy
+// sockets and logs (sandbox.ProxyFiles) whose sandbox is no longer running,
+// optionally only those of binary filter. It returns the number of entries
+// removed.
 func cleanTmp(filter string) (int, error) {
 	entries, err := os.ReadDir(sandbox.DefaultTmpRoot)
 	if os.IsNotExist(err) {
@@ -236,14 +250,21 @@ func cleanTmp(filter string) (int, error) {
 	n := 0
 	for _, e := range entries {
 		name := e.Name()
+		if !e.IsDir() {
+			ext := filepath.Ext(name)
+			if ext != ".sock" && ext != ".log" {
+				continue
+			}
+			name = strings.TrimSuffix(name, ext)
+		}
 		i := strings.LastIndex(name, "-")
-		if !e.IsDir() || i <= 0 || (filter != "" && name[:i] != filter) {
+		if i <= 0 || (filter != "" && name[:i] != filter) {
 			continue
 		}
 		if pid, err := strconv.Atoi(name[i+1:]); err != nil || procs.IsRunning(pid, name[:i]) {
 			continue
 		}
-		path := filepath.Join(sandbox.DefaultTmpRoot, name)
+		path := filepath.Join(sandbox.DefaultTmpRoot, e.Name())
 		if err := os.RemoveAll(path); err != nil {
 			fmt.Fprintln(os.Stderr, "box: warning:", err)
 			continue

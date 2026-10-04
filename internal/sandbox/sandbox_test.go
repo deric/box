@@ -132,7 +132,7 @@ func TestBuildPrivateTmp(t *testing.T) {
 	if err := os.Mkdir(filepath.Dir(root), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	prof := config.Profile{PrivateTmp: true, Tmpfs: []string{"/tmp"}}
+	prof := config.Profile{PrivateTmp: true, Tmpfs: []string{"/tmp"}, BindBinary: true}
 	plan, err := buildBwrap(prof, Options{
 		Binary: "tool", Cwd: cwd, Home: home, TmpRoot: root, ID: "42",
 		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
@@ -150,6 +150,11 @@ func TestBuildPrivateTmp(t *testing.T) {
 	}
 	if strings.Index(cmd, " --tmpfs /tmp ") > strings.Index(cmd, " --bind "+want) {
 		t.Error("the private /tmp bind must come after a tmpfs on /tmp so it wins")
+	}
+	// The private /tmp hides host paths under /tmp, so a binary there (the
+	// test fixture lives under the temp dir) still needs its own bind.
+	if tool := filepath.Join(bin, "tool"); !strings.Contains(cmd, " --ro-bind "+tool+" "+tool+" ") {
+		t.Errorf("binary under a bind of other content must be bound itself:\n%s", cmd)
 	}
 
 	// Exec creates the root shared like /tmp and the directory itself fresh,
@@ -286,6 +291,58 @@ func TestBuildClearEnvPassthrough(t *testing.T) {
 	}
 	if cmd := strings.Join(plan.Args, " "); strings.Contains(cmd, "--setenv BOX_T_KEEP") || strings.Contains(cmd, "--clearenv") {
 		t.Errorf("unexpected passthrough without clear_env: %s", cmd)
+	}
+}
+
+func TestBuildProxy(t *testing.T) {
+	home, cwd, _, bin := fixture(t)
+	self := filepath.Join(filepath.Dir(bin), "box")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(filepath.Dir(home), "tmp", "box")
+	prof := config.Profile{Proxy: true, AllowHosts: []string{"api.anthropic.com", "*.github.com"}}
+	opts := Options{
+		Binary: "tool", Args: []string{"--flag"}, Cwd: cwd, Home: home, TmpRoot: root, ID: "7", Self: self,
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}
+	plan, err := buildBwrap(prof, opts, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(root, "tool-7.sock")
+	if plan.Proxy == nil || plan.Proxy.Socket != sock || plan.Proxy.Log != filepath.Join(root, "tool-7.log") ||
+		len(plan.Proxy.Allow) != 2 {
+		t.Fatalf("Proxy = %+v", plan.Proxy)
+	}
+	cmd := " " + strings.Join(plan.Args, " ") + " "
+	for _, want := range []string{
+		" --bind " + sock + " " + ProxySocket + " ",
+		" --ro-bind " + self + " " + self + " ",
+		" --setenv HTTPS_PROXY http://" + ProxyAddr + " ",
+		" --setenv NO_PROXY localhost,127.0.0.1,::1 ",
+		" -- " + self + " _forward -s " + ProxySocket + " -l " + ProxyAddr + " -- tool --flag ",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("missing %q in\n%s", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, "--share-net") {
+		t.Error("network must not be shared when going through the proxy")
+	}
+	want := self + " _proxy -s " + sock + " -l " + filepath.Join(root, "tool-7.log") + " -a api.anthropic.com -a '*.github.com'"
+	if got := plan.ProxyCommand(); got != want {
+		t.Errorf("ProxyCommand() = %s, want %s", got, want)
+	}
+
+	// Sharing the host network makes the proxy pointless; none is set up.
+	prof.Network = true
+	plan, err = buildBwrap(prof, opts, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Proxy != nil || plan.ProxyCommand() != "" || strings.Contains(strings.Join(plan.Args, " "), "_forward") {
+		t.Errorf("unexpected proxy with network = true: %v", plan.Args)
 	}
 }
 
