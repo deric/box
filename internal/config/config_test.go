@@ -99,3 +99,16 @@ func TestParseRejectsUnknownKeys(t *testing.T) {
 		t.Error("expected error for unknown overlay key")
 	}
 }
+
+func TestDefaultTOMLClaude(t *testing.T) {
+	c, err := Parse(DefaultTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := c.Resolve("claude")
+	for _, want := range []string{"$PWD", "/tmp", "?~/.claude", "?~/.claude.json"} {
+		if !contains(p.RWBinds, want) {
+			t.Errorf("rw_binds = %v, missing %q", p.RWBinds, want)
+		}
+	}
+}

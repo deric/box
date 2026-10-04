@@ -60,10 +60,12 @@ bind_binary = true
 # Raw arguments appended to the bwrap command line, for anything not covered.
 extra_args = []
 
+# Claude Code keeps its settings, credentials, sessions and memory in
+# ~/.claude and its global state in ~/.claude.json.
+[binaries.claude]
+rw_binds = ["?~/.claude", "?~/.claude.json"]
+
 # Example per-binary sections:
-#
-# [binaries.open-agent]
-# rw_binds = ["~/.config/open-agent", "~/.cache/open-agent"]
 #
 # [binaries.untrusted-tool]
 # network = false

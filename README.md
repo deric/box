@@ -1,8 +1,15 @@
-# box
+# box - A Linux sandbox for running agents
 
 `box` runs a program inside a [bubblewrap](https://github.com/containers/bubblewrap)
 (`bwrap`) sandbox with sensible defaults, configured per binary from
 `~/.config/box/box.toml`.
+
+## Getting started
+
+```
+box init # writes config into ~/.config/box/box.toml
+box run claude
+```
 
 ```sh
 box run claude --some-flag      # run claude sandboxed
@@ -46,7 +53,7 @@ hostname = "box"
 env      = { BOX_SANDBOX = "1" }
 
 [binaries.claude]
-rw_binds = ["~/.config/claude", "~/.cache/claude"]
+rw_binds = ["?~/.claude", "?~/.claude.json"]
 
 [binaries.untrusted-tool]
 network    = false
@@ -88,6 +95,12 @@ Locations: config at `$BOX_CONFIG`, else `$XDG_CONFIG_HOME/box/box.toml`, else
 - `bwrap` ≥ 0.10 for overlay mounts (uses `--overlay-src`, `--overlay`, `--tmp-overlay`).
   Overlays need a non-setuid `bwrap` and a kernel with unprivileged overlayfs (≥ 5.11).
 - Go 1.26 to build: `go build -o box .`
+
+### Debian / Ubuntu
+
+```
+sudo apt install bubblewrap
+```
 
 ## Development
 
