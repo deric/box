@@ -149,3 +149,37 @@ func TestShellQuote(t *testing.T) {
 		}
 	}
 }
+
+// On macOS t.TempDir lives under /var, a symlink to /private/var. The binary
+// resolves to the real location while the directory bind keeps the given
+// path; the two must still be recognised as the same mount.
+func TestBuildSkipsBinaryBindUnderSymlinkedParent(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "private", "bin")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "tool"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("private", filepath.Join(root, "var")); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "var", "bin")
+	home := filepath.Join(root, "home")
+	cwd := filepath.Join(home, "project")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prof := config.Profile{ROBinds: []string{bin}, BindBinary: true}
+	plan, err := buildBwrap(prof, Options{
+		Binary: "tool", Cwd: cwd, Home: home,
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(strings.Join(plan.Args, " "), "--ro-bind"); n != 1 {
+		t.Errorf("binary should not be bound separately when its directory is mounted; got %d ro-binds", n)
+	}
+}

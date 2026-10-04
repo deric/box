@@ -369,13 +369,17 @@ func realPath(p string) string {
 }
 
 // covered reports whether path is exposed by an existing bind or overlay and
-// not hidden by a deeper tmpfs.
+// not hidden by a deeper tmpfs. A visible mount also covers paths under the
+// real location of its source, so a binary resolved through a symlinked
+// parent (/var -> /private/var) is not bound a second time.
 func covered(mounts []*mount, path string) bool {
 	best := -1
 	visible := false
 	for _, m := range mounts {
 		if !under(path, m.dest) {
-			continue
+			if !m.visible || m.src == "" || !under(path, realPath(m.src)) {
+				continue
+			}
 		}
 		d := depth(m.dest)
 		if d > best {
