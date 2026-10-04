@@ -41,6 +41,10 @@ overlays = [
   { path = "~/.local/share/mise", persist = true },
 ]
 
+# Host files copied into the sandbox: the program sees the host content at
+# the same path, but changes it makes stay inside and vanish on exit.
+copy_files = []
+
 # Share the host network namespace.
 network = true
 
@@ -68,9 +72,15 @@ bind_binary = true
 extra_args = []
 
 # Claude Code keeps its settings, credentials, sessions and memory in
-# ~/.claude and its global state in ~/.claude.json.
+# ~/.claude and its global state in ~/.claude.json. Only the sessions and
+# memory under ~/.claude/projects and the login credentials (whose tokens are
+# refreshed in place) are shared with the host; the rest of ~/.claude is
+# visible but writes to it are discarded on exit, and ~/.claude.json is a
+# private copy.
 [binaries.claude]
-rw_binds = ["?~/.claude", "?~/.claude.json"]
+overlays = [{ path = "?~/.claude", persist = false }]
+rw_binds = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
+copy_files = ["?~/.claude.json"]
 
 # Example per-binary sections:
 #

@@ -52,6 +52,7 @@ const (
 	kindTmpfs
 	kindSymlink
 	kindOverlay
+	kindFile // a copy of a host file, passed on an inherited descriptor
 )
 
 type mount struct {
@@ -60,6 +61,8 @@ type mount struct {
 	dest    string
 	upper   string // overlay only; empty means a temporary overlay
 	work    string
+	fd      int // file only: descriptor bwrap copies from
+	mode    os.FileMode
 	order   int
 	visible bool // true for binds and overlays: dest exposes host content
 }
@@ -88,6 +91,9 @@ type Plan struct {
 	// TmpDir is the host directory mounted as /tmp (private_tmp); it is
 	// created fresh before running.
 	TmpDir string
+	// Files lists host files held open on descriptors the runner inherits
+	// (copy_files), by descriptor number.
+	Files map[int]string
 	// Dir, ClearEnv, UnsetEnv and Env set up the runner's own working
 	// directory and environment, for runners that cannot do it themselves.
 	// Env holds KEY=VALUE pairs.
@@ -115,6 +121,14 @@ func (p *Plan) Command() string {
 	parts = append(parts, shellQuote(p.Exe))
 	for _, a := range p.Args {
 		parts = append(parts, shellQuote(a))
+	}
+	fds := make([]int, 0, len(p.Files))
+	for fd := range p.Files {
+		fds = append(fds, fd)
+	}
+	sort.Ints(fds)
+	for _, fd := range fds {
+		parts = append(parts, strconv.Itoa(fd)+"<"+shellQuote(p.Files[fd]))
 	}
 	return strings.Join(parts, " ")
 }
@@ -265,6 +279,15 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 		} else {
 			plan.TmpDir = TmpDir(opts.TmpRoot, plan.Name, opts.ID)
 			add(&mount{kind: kindRW, src: plan.TmpDir, dest: "/tmp", visible: true})
+		}
+	}
+	for _, p := range prof.CopyFiles {
+		if resolveLinks {
+			plan.Warnings = append(plan.Warnings, "copy_files is not supported on this platform; ignored")
+			break
+		}
+		if m := copyFile(exp, p, plan); m != nil {
+			add(m)
 		}
 	}
 	for _, o := range prof.Overlays {
@@ -425,6 +448,37 @@ func bindMount(expanded func(string) (string, bool), raw string, kind mountKind,
 		src = realPath(src)
 	}
 	return &mount{kind: kind, src: src, dest: src, visible: true}
+}
+
+// copyFile opens a host file for bwrap's --file, which copies it into the
+// sandbox at the same path. The descriptor is deliberately left without
+// close-on-exec so that bwrap inherits it when Exec replaces this process.
+func copyFile(expanded func(string) (string, bool), raw string, plan *Plan) *mount {
+	src, optional := expanded(raw)
+	if src == "" {
+		return nil
+	}
+	fi, err := os.Stat(src)
+	if err != nil {
+		if !optional {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s skipped: %v", src, err))
+		}
+		return nil
+	}
+	if !fi.Mode().IsRegular() {
+		plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s skipped: not a regular file", src))
+		return nil
+	}
+	fd, err := syscall.Open(src, syscall.O_RDONLY, 0)
+	if err != nil {
+		plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s skipped: %v", src, err))
+		return nil
+	}
+	if plan.Files == nil {
+		plan.Files = map[int]string{}
+	}
+	plan.Files[fd] = src
+	return &mount{kind: kindFile, src: src, dest: src, fd: fd, mode: fi.Mode().Perm(), visible: true}
 }
 
 // realPath resolves symlinks in p, returning p unchanged when that fails.

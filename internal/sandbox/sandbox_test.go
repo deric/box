@@ -3,7 +3,9 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"box/internal/config"
@@ -179,6 +181,64 @@ func TestBuildPrivateTmp(t *testing.T) {
 	if plan.TmpDir != "" || strings.Contains(" "+strings.Join(plan.Args, " ")+" ", " /tmp ") {
 		t.Errorf("unexpected /tmp handling: %q %v", plan.TmpDir, plan.Args)
 	}
+}
+
+func TestBuildCopyFiles(t *testing.T) {
+	home, cwd, _, bin := fixture(t)
+	file := filepath.Join(home, ".claude.json")
+	if err := os.WriteFile(file, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prof := config.Profile{
+		Tmpfs:     []string{"$HOME"},
+		CopyFiles: []string{"~/.claude.json", "?~/missing", "~/project"},
+	}
+	plan, err := buildBwrap(prof, Options{
+		Binary: "tool", Cwd: cwd, Home: home,
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Files) != 1 {
+		t.Fatalf("Files = %v, want one descriptor", plan.Files)
+	}
+	var fd int
+	for k := range plan.Files {
+		fd = k
+	}
+	if plan.Files[fd] != file {
+		t.Errorf("Files[%d] = %q, want %q", fd, plan.Files[fd], file)
+	}
+	// The descriptor must survive exec, so it is opened without CLOEXEC.
+	if flags, err := unixFcntl(fd); err != nil || flags&syscall.FD_CLOEXEC != 0 {
+		t.Errorf("descriptor %d must not be close-on-exec (flags %#x, %v)", fd, flags, err)
+	}
+	cmd := " " + strings.Join(plan.Args, " ") + " "
+	want := " --perms 0600 --file " + strconv.Itoa(fd) + " " + file + " "
+	if !strings.Contains(cmd, want) {
+		t.Errorf("missing %q in\n%s", want, cmd)
+	}
+	if strings.Index(cmd, " --tmpfs "+home+" ") > strings.Index(cmd, want) {
+		t.Error("the copy must be written after the tmpfs on $HOME is mounted")
+	}
+	if !strings.HasSuffix(plan.Command(), " "+strconv.Itoa(fd)+"<"+file) {
+		t.Errorf("Command() should redirect the file onto the descriptor: %s", plan.Command())
+	}
+	if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], "not a regular file") {
+		t.Errorf("want one warning about the directory, got %v", plan.Warnings)
+	}
+	if err := syscall.Close(fd); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func unixFcntl(fd int) (int, error) {
+	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_GETFD, 0)
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(flags), nil
 }
 
 func TestBuildUnknownCommand(t *testing.T) {

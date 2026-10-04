@@ -106,10 +106,19 @@ func TestDefaultTOMLClaude(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := c.Resolve("claude")
-	for _, want := range []string{"$PWD", "?~/.claude", "?~/.claude.json"} {
+	for _, want := range []string{"$PWD", "?~/.claude/projects", "?~/.claude/.credentials.json"} {
 		if !contains(p.RWBinds, want) {
 			t.Errorf("rw_binds = %v, missing %q", p.RWBinds, want)
 		}
+	}
+	if contains(p.RWBinds, "?~/.claude") || contains(p.RWBinds, "?~/.claude.json") {
+		t.Errorf("~/.claude must be an overlay and ~/.claude.json a copy, not rw_binds %v", p.RWBinds)
+	}
+	if len(p.Overlays) != 2 || p.Overlays[1].Path != "?~/.claude" || p.Overlays[1].Persist {
+		t.Errorf("want a temporary ~/.claude overlay after the default one, got %+v", p.Overlays)
+	}
+	if got, want := p.CopyFiles, []string{"?~/.claude.json"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("copy_files = %v, want %v", got, want)
 	}
 	if contains(p.RWBinds, "/tmp") || contains(p.Tmpfs, "/tmp") {
 		t.Errorf("/tmp must come from private_tmp, not rw_binds %v or tmpfs %v", p.RWBinds, p.Tmpfs)

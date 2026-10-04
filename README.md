@@ -7,16 +7,15 @@ See [macOS](#macos) for how the two differ.
 
 ## Getting started
 
-```
-box init # writes config into ~/.config/box/box.toml
-box run claude
+```sh
+box init                        # writes config into ~/.config/box/box.toml
+box run claude                  # start `claude` in a sandbox
 ```
 
 ```sh
 box run claude --some-flag      # run claude sandboxed
 box show claude                 # print the sandbox command line without running it
 box config claude               # print the effective, merged profile
-box init                            # write the default ~/.config/box/box.toml
 box clean claude                # drop claude's overlay layers and stale private /tmp dirs
 box ps                          # list running sandboxes with process count, CPU, memory
 ```
@@ -31,6 +30,8 @@ box ps                          # list running sandboxes with process count, CPU
 | `/var/tmp`                       | empty tmpfs                                          |
 | `$HOME`                          | empty tmpfs; only listed paths underneath are visible |
 | `~/.local/share/mise`            | overlay: host content visible, writes land in a per-binary upper layer under `~/.local/state/box/overlays/` |
+| `~/.claude` (claude only)        | temporary overlay: host content visible, writes discarded on exit; `projects/` and `.credentials.json` read-write |
+| `~/.claude.json` (claude only)   | private copy of the host file                        |
 | network                          | shared with the host                                 |
 | `/proc`, `/dev`                  | fresh, minimal                                       |
 | PID, IPC, UTS, cgroup namespaces | unshared; hostname is `box`                          |
@@ -57,7 +58,9 @@ hostname = "box"
 env      = { BOX_SANDBOX = "1" }
 
 [binaries.claude]
-rw_binds = ["?~/.claude", "?~/.claude.json"]
+overlays   = [{ path = "?~/.claude", persist = false }]
+rw_binds   = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
+copy_files = ["?~/.claude.json"]
 
 [binaries.trusted-tool]
 private_tmp = false          # share the host's /tmp instead
@@ -79,6 +82,7 @@ with `?` to skip silently.
 | `dev_binds`       | list              | device paths (`--dev-bind`), e.g. `/dev/dri`                   |
 | `tmpfs`           | list              | fresh tmpfs mounts                                             |
 | `overlays`        | list              | `"path"` or `{ path, persist }`; `persist = false` discards writes on exit |
+| `copy_files`      | list              | host files copied into the sandbox (`--file`); changes made inside never reach the host |
 | `drop_binds`      | list              | inherited entries to remove (binary sections only)             |
 | `network`         | bool              | share the host network                                         |
 | `hostname`        | string            | hostname inside the sandbox; empty keeps the host's            |
@@ -109,7 +113,7 @@ the Linux sandbox as closely as Seatbelt allows:
 | unmounted paths are absent            | unlisted paths are denied; `stat` still works everywhere so path resolution does |
 | `tmpfs`: empty, writable, discarded   | hidden: contents can be neither read nor written              |
 | `overlays`                            | read-only (with a warning)                                    |
-| `private_tmp`: own `/tmp` directory   | not supported (warned and ignored)                            |
+| `copy_files`, `private_tmp`           | not supported (warned and ignored)                            |
 | `network = false`: own empty netns    | no IP traffic at all, loopback included                       |
 | Unix sockets under mounted paths      | Unix sockets under exposed paths                              |
 | PID / IPC namespaces                  | processes may only inspect and signal their own sandbox; Mach services are limited to a short list (name lookup, logging, and with network: DNS and TLS trust) |
@@ -169,6 +173,14 @@ task clean          # remove build artifacts
   its sandboxes; stats cover the whole process tree under that bwrap.
 - Mounts are applied parents-first, so a tmpfs on `$HOME` never hides a bind
   or overlay placed underneath it.
+- `copy_files` opens each file before `exec` and hands the descriptor to
+  `bwrap`, which writes a copy at the same path with the host file's mode
+  (`box show` prints the matching `N<file` redirection). Claude Code's
+  defaults use this for `~/.claude.json` and a temporary overlay for
+  `~/.claude`, so only `~/.claude/projects` (sessions, memory) and
+  `~/.claude/.credentials.json` (tokens are refreshed in place) are written
+  back to the host; settings edits made inside the sandbox are lost when it
+  exits.
 - With `private_tmp` (the Linux default) each sandbox gets a fresh host
   directory `/tmp/box/<name>-<pid>` mounted as `/tmp`, where `<pid>` is the
   PID `box ps` shows. Nothing other host processes put in `/tmp` (X11

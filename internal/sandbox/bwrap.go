@@ -1,7 +1,9 @@
 package sandbox
 
 import (
+	"fmt"
 	"path/filepath"
+	"strconv"
 
 	"box/internal/config"
 )
@@ -65,6 +67,8 @@ func (m *mount) args() []string {
 			return []string{"--overlay-src", m.src, "--tmp-overlay", m.dest}
 		}
 		return []string{"--overlay-src", m.src, "--overlay", m.upper, m.work, m.dest}
+	case kindFile:
+		return []string{"--perms", fmt.Sprintf("%04o", m.mode), "--file", strconv.Itoa(m.fd), m.dest}
 	}
 	return nil
 }
