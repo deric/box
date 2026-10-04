@@ -6,16 +6,30 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 )
 
-// DefaultTOML is the configuration written by `box init` and used when no
-// configuration file exists.
-//
-//go:embed default.toml
-var DefaultTOML string
+// Built-in configurations for each supported platform.
+var (
+	//go:embed default_linux.toml
+	DefaultLinuxTOML string
+	//go:embed default_darwin.toml
+	DefaultDarwinTOML string
+)
+
+// DefaultTOML is the configuration for the current platform, written by
+// `box init` and used when no configuration file exists.
+var DefaultTOML = defaultFor(runtime.GOOS)
+
+func defaultFor(goos string) string {
+	if goos == "darwin" {
+		return DefaultDarwinTOML
+	}
+	return DefaultLinuxTOML
+}
 
 // Overlay describes an overlay mount. It decodes from either a plain string
 // (the path, persist = true) or a table {path = "...", persist = bool}.
@@ -82,6 +96,7 @@ type Section struct {
 	UnsetEnv      []string          `toml:"unset_env"`
 	BindBinary    *bool             `toml:"bind_binary"`
 	ExtraArgs     []string          `toml:"extra_args"`
+	SeatbeltRules []string          `toml:"seatbelt_rules"`
 	Inherit       *bool             `toml:"inherit"`
 }
 
@@ -107,6 +122,7 @@ type Profile struct {
 	UnsetEnv      []string          `toml:"unset_env"`
 	BindBinary    bool              `toml:"bind_binary"`
 	ExtraArgs     []string          `toml:"extra_args"`
+	SeatbeltRules []string          `toml:"seatbelt_rules"`
 }
 
 // Path returns the configuration file location: $BOX_CONFIG, else
@@ -209,6 +225,7 @@ func (c *Config) Resolve(name string) Profile {
 		UnsetEnv:      mergeList(base.UnsetEnv, sec.UnsetEnv, nil),
 		BindBinary:    pick(base.BindBinary, sec.BindBinary, true),
 		ExtraArgs:     append(append([]string{}, base.ExtraArgs...), sec.ExtraArgs...),
+		SeatbeltRules: append(append([]string{}, base.SeatbeltRules...), sec.SeatbeltRules...),
 	}
 	for k, v := range base.Env {
 		p.Env[k] = v

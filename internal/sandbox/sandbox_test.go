@@ -2,20 +2,12 @@ package sandbox
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"box/internal/config"
 )
-
-func requireBwrap(t *testing.T) {
-	t.Helper()
-	if _, err := exec.LookPath("bwrap"); err != nil {
-		t.Skip("bwrap not installed")
-	}
-}
 
 // fixture builds a fake host tree: home with a project dir, a tool dir to
 // overlay, a merged-usr style symlink, and a binary outside all mounts.
@@ -41,7 +33,6 @@ func fixture(t *testing.T) (home, cwd, tools, bin string) {
 }
 
 func TestBuildOrdersAndExpands(t *testing.T) {
-	requireBwrap(t)
 	home, cwd, tools, bin := fixture(t)
 	root := filepath.Dir(home)
 	state := filepath.Join(root, "state")
@@ -58,14 +49,14 @@ func TestBuildOrdersAndExpands(t *testing.T) {
 		BindBinary: true,
 		ExtraArgs:  []string{"--cap-drop", "ALL"},
 	}
-	plan, err := Build(prof, Options{
+	plan, err := buildBwrap(prof, Options{
 		Binary:   "tool",
 		Args:     []string{"--flag"},
 		Cwd:      cwd,
 		Home:     home,
 		StateDir: state,
 		Lookup:   func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
-	})
+	}, "bwrap")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,13 +89,12 @@ func TestBuildOrdersAndExpands(t *testing.T) {
 }
 
 func TestBuildSkipsBinaryBindWhenCovered(t *testing.T) {
-	requireBwrap(t)
 	home, cwd, _, bin := fixture(t)
 	prof := config.Profile{ROBinds: []string{filepath.Dir(bin)}, BindBinary: true}
-	plan, err := Build(prof, Options{
+	plan, err := buildBwrap(prof, Options{
 		Binary: "tool", Cwd: cwd, Home: home,
 		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
-	})
+	}, "bwrap")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,15 +104,14 @@ func TestBuildSkipsBinaryBindWhenCovered(t *testing.T) {
 }
 
 func TestBuildTmpOverlayAndNoNetwork(t *testing.T) {
-	requireBwrap(t)
 	home, cwd, tools, bin := fixture(t)
 	prof := config.Profile{
 		Overlays: []config.Overlay{{Path: tools, Persist: false}},
 	}
-	plan, err := Build(prof, Options{
+	plan, err := buildBwrap(prof, Options{
 		Binary: "tool", Cwd: cwd, Home: home,
 		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
-	})
+	}, "bwrap")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,11 +125,10 @@ func TestBuildTmpOverlayAndNoNetwork(t *testing.T) {
 }
 
 func TestBuildUnknownCommand(t *testing.T) {
-	requireBwrap(t)
-	_, err := Build(config.Profile{}, Options{
+	_, err := buildBwrap(config.Profile{}, Options{
 		Binary: "nope", Cwd: "/", Home: "/",
 		Lookup: func(string) (string, error) { return "", os.ErrNotExist },
-	})
+	}, "bwrap")
 	if err == nil {
 		t.Error("expected error for unknown command")
 	}

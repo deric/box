@@ -1,4 +1,5 @@
-// Package procs finds running box sandboxes by scanning /proc.
+// Package procs finds running box sandboxes: by scanning /proc on Linux, and
+// via ps(1) and the kern.procargs2 sysctl on macOS.
 package procs
 
 import (
@@ -32,9 +33,10 @@ type proc struct {
 	pid     int
 	ppid    int
 	argv    []string
-	cpu     uint64 // clock ticks, including reaped children
-	rss     uint64 // pages
-	started uint64 // clock ticks since boot
+	env     []string // macOS only
+	cpu     time.Duration
+	rss     uint64 // bytes
+	started time.Time
 }
 
 // List returns the sandboxes whose bwrap argv[0] starts with prefix, sorted
@@ -49,51 +51,62 @@ func List(root, prefix string) ([]Sandbox, error) {
 		return nil, err
 	}
 	all := map[int]*proc{}
-	children := map[int][]int{}
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil {
 			continue
 		}
-		p, err := readProc(root, pid)
+		p, err := readProc(root, pid, boot)
 		if err != nil {
 			continue // exited while scanning, or not ours to read
 		}
 		all[pid] = p
-		children[p.ppid] = append(children[p.ppid], pid)
 	}
+	// bwrap forks an inner bwrap as PID 1 of the new namespace; both carry
+	// the tag, and group only reports the outer one.
+	return group(all, func(p *proc) (Sandbox, bool) {
+		if len(p.argv) == 0 || !strings.HasPrefix(p.argv[0], prefix) {
+			return Sandbox{}, false
+		}
+		s := Sandbox{Name: strings.TrimPrefix(p.argv[0], prefix)}
+		s.Command, s.Dir = parseArgs(p.argv[1:])
+		return s, true
+	}), nil
+}
 
-	tagged := func(p *proc) bool {
-		return p != nil && len(p.argv) > 0 && strings.HasPrefix(p.argv[0], prefix)
+// group builds one Sandbox per process tree whose root is tagged and has an
+// untagged parent, summing usage over the whole tree. tag reports whether a
+// process is tagged and fills in Name, Command and Dir.
+func group(all map[int]*proc, tag func(*proc) (Sandbox, bool)) []Sandbox {
+	children := map[int][]int{}
+	for _, p := range all {
+		children[p.ppid] = append(children[p.ppid], p.pid)
 	}
-	pageSize := uint64(os.Getpagesize())
+	tagged := func(p *proc) bool {
+		if p == nil {
+			return false
+		}
+		_, ok := tag(p)
+		return ok
+	}
 	var out []Sandbox
 	for _, p := range all {
-		// bwrap forks an inner bwrap as PID 1 of the new namespace; both carry
-		// the tag, so only the one without a tagged parent is a sandbox root.
-		if !tagged(p) || tagged(all[p.ppid]) {
+		s, ok := tag(p)
+		if !ok || tagged(all[p.ppid]) {
 			continue
 		}
-		s := Sandbox{
-			PID:     p.pid,
-			Name:    strings.TrimPrefix(p.argv[0], prefix),
-			Started: boot.Add(ticks(p.started)),
-		}
-		s.Command, s.Dir = parseArgs(p.argv[1:])
-		var cpu, rss uint64
+		s.PID, s.Started = p.pid, p.started
 		stack := []int{p.pid}
 		for len(stack) > 0 {
 			pid := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			if c := all[pid]; c != nil {
 				s.Procs++
-				cpu += c.cpu
-				rss += c.rss
+				s.CPU += c.cpu
+				s.RSS += c.rss
 			}
 			stack = append(stack, children[pid]...)
 		}
-		s.CPU = ticks(cpu)
-		s.RSS = rss * pageSize
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -102,7 +115,7 @@ func List(root, prefix string) ([]Sandbox, error) {
 		}
 		return out[i].PID < out[j].PID
 	})
-	return out, nil
+	return out
 }
 
 func ticks(n uint64) time.Duration {
@@ -126,7 +139,7 @@ func parseArgs(args []string) (cmd []string, dir string) {
 	return nil, dir
 }
 
-func readProc(root string, pid int) (*proc, error) {
+func readProc(root string, pid int, boot time.Time) (*proc, error) {
 	dir := filepath.Join(root, strconv.Itoa(pid))
 	stat, err := os.ReadFile(filepath.Join(dir, "stat"))
 	if err != nil {
@@ -148,11 +161,12 @@ func readProc(root string, pid int) (*proc, error) {
 		return n
 	}
 	p := &proc{
-		pid:     pid,
-		ppid:    int(num(4)),
-		cpu:     num(14) + num(15) + num(16) + num(17),
-		started: num(22),
-		rss:     num(24),
+		pid:  pid,
+		ppid: int(num(4)),
+		// Times include reaped children.
+		cpu:     ticks(num(14) + num(15) + num(16) + num(17)),
+		started: boot.Add(ticks(num(22))),
+		rss:     num(24) * uint64(os.Getpagesize()),
 	}
 	cmdline, err := os.ReadFile(filepath.Join(dir, "cmdline"))
 	if err != nil {

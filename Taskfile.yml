@@ -19,7 +19,7 @@ tasks:
       - "**/*.go"
       - go.mod
       - go.sum
-      - internal/config/default.toml
+      - internal/config/*.toml
     generates:
       - "{{.BIN}}"
     cmds:

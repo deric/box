@@ -1,4 +1,6 @@
-// Package sandbox turns a resolved profile into a bwrap command line.
+// Package sandbox turns a resolved profile into a sandbox command line:
+// bubblewrap (bwrap) on Linux, sandbox-exec with a generated Seatbelt profile
+// on macOS.
 package sandbox
 
 import (
@@ -6,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -50,20 +53,47 @@ type mount struct {
 // sandboxes apart from other bwrap users.
 const ProcTitlePrefix = "box:"
 
-// Plan is a fully computed bwrap invocation.
+// NameEnv and DirEnv are set inside macOS sandboxes to the binary's base name
+// and the working directory. Seatbelt leaves no wrapper process behind, so
+// `box ps` finds sandboxes by these variables instead of ProcTitlePrefix.
+const (
+	NameEnv = "BOX_NAME"
+	DirEnv  = "BOX_DIR"
+)
+
+// Plan is a fully computed sandbox invocation.
 type Plan struct {
 	Name     string   // base name of the sandboxed binary
-	Bwrap    string   // path to the bwrap executable
-	Args     []string // bwrap arguments, without argv[0]
+	Exe      string   // path to the sandbox runner (bwrap or sandbox-exec)
+	Args     []string // runner arguments, without argv[0]
 	Warnings []string
 	// Dirs lists directories that must exist before running (overlay layers).
 	Dirs []string
+	// Dir, ClearEnv, UnsetEnv and Env set up the runner's own working
+	// directory and environment, for runners that cannot do it themselves.
+	// Env holds KEY=VALUE pairs.
+	Dir      string
+	ClearEnv bool
+	UnsetEnv []string
+	Env      []string
 }
 
 // Command returns the invocation as a shell-quoted string.
 func (p *Plan) Command() string {
-	parts := make([]string, 0, len(p.Args)+1)
-	parts = append(parts, shellQuote(p.Bwrap))
+	var parts []string
+	if p.ClearEnv || len(p.UnsetEnv) > 0 || len(p.Env) > 0 {
+		parts = append(parts, "env")
+		if p.ClearEnv {
+			parts = append(parts, "-i")
+		}
+		for _, k := range p.UnsetEnv {
+			parts = append(parts, "-u", shellQuote(k))
+		}
+		for _, kv := range p.Env {
+			parts = append(parts, shellQuote(kv))
+		}
+	}
+	parts = append(parts, shellQuote(p.Exe))
 	for _, a := range p.Args {
 		parts = append(parts, shellQuote(a))
 	}
@@ -71,61 +101,116 @@ func (p *Plan) Command() string {
 }
 
 // Exec creates any required directories and replaces the current process
-// with bwrap, tagging argv[0] with ProcTitlePrefix. It only returns on error.
+// with the runner, tagging argv[0] with ProcTitlePrefix. It only returns on
+// error.
 func (p *Plan) Exec() error {
 	for _, d := range p.Dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
 		}
 	}
+	if p.Dir != "" {
+		if err := os.Chdir(p.Dir); err != nil {
+			return err
+		}
+	}
 	argv := append([]string{ProcTitlePrefix + p.Name}, p.Args...)
-	return syscall.Exec(p.Bwrap, argv, os.Environ())
+	return syscall.Exec(p.Exe, argv, p.environ())
 }
 
-// Build computes the bwrap command line for the given profile and options.
+func (p *Plan) environ() []string {
+	var env []string
+	if !p.ClearEnv {
+		env = os.Environ()
+	}
+	drop := map[string]bool{}
+	for _, k := range p.UnsetEnv {
+		drop[k] = true
+	}
+	for _, kv := range p.Env {
+		k, _, _ := strings.Cut(kv, "=")
+		drop[k] = true
+	}
+	out := make([]string, 0, len(env)+len(p.Env))
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if !drop[k] {
+			out = append(out, kv)
+		}
+	}
+	return append(out, p.Env...)
+}
+
+// Build computes the sandbox invocation for the given profile and options:
+// sandbox-exec on macOS, bwrap everywhere else.
 func Build(prof config.Profile, opts Options) (*Plan, error) {
-	if opts.Binary == "" {
-		return nil, fmt.Errorf("no command given")
+	if runtime.GOOS == "darwin" {
+		exe, err := exec.LookPath("sandbox-exec")
+		if err != nil {
+			return nil, fmt.Errorf("sandbox-exec not found in PATH (expected /usr/bin/sandbox-exec)")
+		}
+		return buildSeatbelt(prof, opts, exe)
 	}
-	if err := fillDefaults(&opts); err != nil {
-		return nil, err
-	}
-	bwrap, err := exec.LookPath("bwrap")
+	exe, err := exec.LookPath("bwrap")
 	if err != nil {
 		return nil, fmt.Errorf("bwrap not found in PATH: install bubblewrap")
 	}
+	return buildBwrap(prof, opts, exe)
+}
 
-	name := filepath.Base(opts.Binary)
-	plan := &Plan{Name: name, Bwrap: bwrap}
-	exp := expander(opts)
+// collect resolves the profile's mounts into a parents-first list. With
+// resolveLinks (Seatbelt, which matches real paths) host symlinks are followed
+// and overlays degrade to read-only; otherwise symlinks are recreated and
+// overlays get their layer directories.
+func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) ([]*mount, error) {
+	if opts.Binary == "" {
+		return nil, fmt.Errorf("no command given")
+	}
+	if err := fillDefaults(opts); err != nil {
+		return nil, err
+	}
+	exp := expander(*opts)
 	var mounts []*mount
 	add := func(m *mount) {
 		m.dest = filepath.Clean(m.dest)
+		for _, o := range mounts {
+			if o.kind == m.kind && o.dest == m.dest {
+				return // e.g. /tmp and $TMPDIR resolving to the same path
+			}
+		}
 		m.order = len(mounts)
 		mounts = append(mounts, m)
 	}
+	bind := func(raw string, kind mountKind) {
+		if m := bindMount(exp, raw, kind, plan, resolveLinks); m != nil {
+			add(m)
+		}
+	}
 
 	for _, p := range prof.ROBinds {
-		if m := bindMount(exp, p, kindRO, plan); m != nil {
-			add(m)
-		}
+		bind(p, kindRO)
 	}
 	for _, p := range prof.RWBinds {
-		if m := bindMount(exp, p, kindRW, plan); m != nil {
-			add(m)
-		}
+		bind(p, kindRW)
 	}
 	for _, p := range prof.DevBinds {
-		if m := bindMount(exp, p, kindDev, plan); m != nil {
-			add(m)
-		}
+		bind(p, kindDev)
 	}
 	for _, p := range prof.Tmpfs {
 		dest, _ := exp(p)
+		if dest == "" {
+			continue
+		}
+		if resolveLinks {
+			dest = realPath(dest)
+		}
 		add(&mount{kind: kindTmpfs, dest: dest})
 	}
 	for _, o := range prof.Overlays {
 		src, optional := exp(o.Path)
+		if src == "" {
+			continue
+		}
 		fi, err := os.Stat(src)
 		if err != nil {
 			if !optional {
@@ -137,12 +222,18 @@ func Build(prof config.Profile, opts Options) (*Plan, error) {
 			plan.Warnings = append(plan.Warnings, fmt.Sprintf("overlay %s skipped: not a directory", src))
 			continue
 		}
+		if resolveLinks {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("overlay %s is read-only: overlays are not supported on this platform", src))
+			src = realPath(src)
+			add(&mount{kind: kindRO, src: src, dest: src, visible: true})
+			continue
+		}
 		m := &mount{kind: kindOverlay, src: src, dest: src, visible: true}
 		if o.Persist {
 			if opts.StateDir == "" {
 				return nil, fmt.Errorf("persistent overlay %s requires a state directory", src)
 			}
-			layer := filepath.Join(opts.StateDir, "overlays", name, layerName(src))
+			layer := filepath.Join(opts.StateDir, "overlays", plan.Name, layerName(src))
 			m.upper = filepath.Join(layer, "upper")
 			m.work = filepath.Join(layer, "work")
 			plan.Dirs = append(plan.Dirs, m.upper, m.work)
@@ -179,39 +270,7 @@ func Build(prof config.Profile, opts Options) (*Plan, error) {
 		}
 		return mounts[i].order < mounts[j].order
 	})
-
-	args := []string{"--unshare-all"}
-	if prof.Network {
-		args = append(args, "--share-net")
-	}
-	if prof.Hostname != "" {
-		args = append(args, "--hostname", prof.Hostname)
-	}
-	if prof.DieWithParent {
-		args = append(args, "--die-with-parent")
-	}
-	if prof.NewSession {
-		args = append(args, "--new-session")
-	}
-	args = append(args, "--proc", "/proc", "--dev", "/dev")
-	for _, m := range mounts {
-		args = append(args, m.args()...)
-	}
-	args = append(args, "--chdir", opts.Cwd)
-	if prof.ClearEnv {
-		args = append(args, "--clearenv")
-	}
-	for _, k := range sortedKeys(prof.Env) {
-		args = append(args, "--setenv", k, prof.Env[k])
-	}
-	for _, k := range prof.UnsetEnv {
-		args = append(args, "--unsetenv", k)
-	}
-	args = append(args, prof.ExtraArgs...)
-	args = append(args, "--", opts.Binary)
-	args = append(args, opts.Args...)
-	plan.Args = args
-	return plan, nil
+	return mounts, nil
 }
 
 func fillDefaults(o *Options) error {
@@ -253,15 +312,22 @@ func expander(o Options) func(string) (string, bool) {
 		} else if strings.HasPrefix(p, "~/") {
 			p = filepath.Join(o.Home, p[2:])
 		}
-		return filepath.Clean(os.Expand(p, mapping)), optional
+		if p = os.Expand(p, mapping); p == "" {
+			return "", optional // e.g. an unset variable
+		}
+		return filepath.Clean(p), optional
 	}
 }
 
 // bindMount describes how to expose one host path. Symlinks on the host are
-// recreated as symlinks (merged-/usr systems link /bin -> usr/bin); missing
-// paths produce a warning (unless optional) and nil.
-func bindMount(expanded func(string) (string, bool), raw string, kind mountKind, plan *Plan) *mount {
+// either resolved (resolveLinks) or recreated as symlinks (merged-/usr
+// systems link /bin -> usr/bin); missing paths produce a warning (unless
+// optional) and nil.
+func bindMount(expanded func(string) (string, bool), raw string, kind mountKind, plan *Plan, resolveLinks bool) *mount {
 	src, optional := expanded(raw)
+	if src == "" {
+		return nil
+	}
 	fi, err := os.Lstat(src)
 	if err != nil {
 		if !optional {
@@ -270,6 +336,16 @@ func bindMount(expanded func(string) (string, bool), raw string, kind mountKind,
 		return nil
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
+		if resolveLinks {
+			real, err := filepath.EvalSymlinks(src)
+			if err != nil {
+				if !optional {
+					plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s skipped: %v", src, err))
+				}
+				return nil
+			}
+			return &mount{kind: kind, src: real, dest: real, visible: true}
+		}
 		target, err := os.Readlink(src)
 		if err != nil {
 			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s skipped: %v", src, err))
@@ -277,7 +353,19 @@ func bindMount(expanded func(string) (string, bool), raw string, kind mountKind,
 		}
 		return &mount{kind: kindSymlink, src: target, dest: src}
 	}
+	if resolveLinks {
+		// A parent directory may still be a symlink (/var -> private/var).
+		src = realPath(src)
+	}
 	return &mount{kind: kind, src: src, dest: src, visible: true}
+}
+
+// realPath resolves symlinks in p, returning p unchanged when that fails.
+func realPath(p string) string {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real
+	}
+	return p
 }
 
 // covered reports whether path is exposed by an existing bind or overlay and
@@ -320,27 +408,6 @@ func layerName(p string) string {
 		s = "root"
 	}
 	return s
-}
-
-func (m *mount) args() []string {
-	switch m.kind {
-	case kindRO:
-		return []string{"--ro-bind", m.src, m.dest}
-	case kindRW:
-		return []string{"--bind", m.src, m.dest}
-	case kindDev:
-		return []string{"--dev-bind", m.src, m.dest}
-	case kindTmpfs:
-		return []string{"--tmpfs", m.dest}
-	case kindSymlink:
-		return []string{"--symlink", m.src, m.dest}
-	case kindOverlay:
-		if m.upper == "" {
-			return []string{"--overlay-src", m.src, "--tmp-overlay", m.dest}
-		}
-		return []string{"--overlay-src", m.src, "--overlay", m.upper, m.work, m.dest}
-	}
-	return nil
 }
 
 func sortedKeys(m map[string]string) []string {

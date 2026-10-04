@@ -1,8 +1,9 @@
-# box - A Linux sandbox for running agents
+# box - A sandbox for running agents
 
 `box` runs a program inside a [bubblewrap](https://github.com/containers/bubblewrap)
-(`bwrap`) sandbox with sensible defaults, configured per binary from
-`~/.config/box/box.toml`.
+(`bwrap`) sandbox on Linux, or a `sandbox-exec` (Seatbelt) sandbox on macOS,
+with sensible defaults, configured per binary from `~/.config/box/box.toml`.
+See [macOS](#macos) for how the two differ.
 
 ## Getting started
 
@@ -13,14 +14,14 @@ box run claude
 
 ```sh
 box run claude --some-flag      # run claude sandboxed
-box show claude                 # print the bwrap command line without running it
+box show claude                 # print the sandbox command line without running it
 box config claude               # print the effective, merged profile
 box init                            # write the default ~/.config/box/box.toml
 box clean claude                # drop claude's persistent overlay layers
 box ps                          # list running sandboxes with process count, CPU, memory
 ```
 
-## Defaults
+## Defaults (Linux)
 
 | Host path                        | Inside the sandbox                                   |
 |----------------------------------|------------------------------------------------------|
@@ -83,15 +84,51 @@ with `?` to skip silently.
 | `env`             | table             | variables to set                                               |
 | `unset_env`       | list              | variables to unset                                             |
 | `bind_binary`     | bool              | mount the resolved executable if no other mount exposes it     |
-| `extra_args`      | list              | raw arguments appended to `bwrap`                              |
+| `extra_args`      | list              | raw arguments appended to `bwrap` / `sandbox-exec`             |
+| `seatbelt_rules`  | list              | raw SBPL rules appended to the macOS profile                   |
 | `inherit`         | bool              | `false` ignores `[default]` for this binary                    |
 
 Locations: config at `$BOX_CONFIG`, else `$XDG_CONFIG_HOME/box/box.toml`, else
 `~/.config/box/box.toml`; overlay layers at `$XDG_STATE_HOME/box`, else
 `~/.local/state/box`.
 
+## macOS
+
+On macOS `box` runs the program under `sandbox-exec` with a generated Seatbelt
+profile (`box show <command>` prints it). The profile starts from
+`(deny default)`, then grants what the config lists, so the result matches
+the Linux sandbox as closely as Seatbelt allows:
+
+| Linux (`bwrap`)                       | macOS (`sandbox-exec`)                                        |
+|---------------------------------------|---------------------------------------------------------------|
+| `ro_binds` / `rw_binds` / `dev_binds` | read / read-write access to those paths (symlinks such as `/tmp` → `/private/tmp` are resolved) |
+| unmounted paths are absent            | unlisted paths are denied; `stat` still works everywhere so path resolution does |
+| `tmpfs`: empty, writable, discarded   | hidden: contents can be neither read nor written              |
+| `overlays`                            | read-only (with a warning)                                    |
+| `network = false`: own empty netns    | no IP traffic at all, loopback included                       |
+| Unix sockets under mounted paths      | Unix sockets under exposed paths                              |
+| PID / IPC namespaces                  | processes may only inspect and signal their own sandbox; Mach services are limited to a short list (name lookup, logging, and with network: DNS and TLS trust) |
+| `hostname`, `new_session`             | not supported (warned and ignored)                            |
+| `clear_env`, `env`, `unset_env`       | applied by `box` before starting `sandbox-exec`               |
+
+The macOS default config (written by `box init` on a Mac) exposes the system
+directories, Homebrew, the current directory, `/tmp` and `$TMPDIR`, and hides
+`$HOME`. Programs that expect a writable `$HOME` (caches, lock files) need the
+relevant paths added to `rw_binds`. Claude Code's section additionally exposes
+`~/Library/Keychains`, where its login is stored. Anything else a program needs
+(a Mach service, an IOKit class) can be granted with `seatbelt_rules`, for
+example `'(allow mach-lookup (global-name "com.apple.pasteboard.1"))'`.
+
+Inside a macOS sandbox `BOX_NAME` and `BOX_DIR` are set to the binary's name
+and the working directory; `box ps` finds sandboxes by these, since
+`sandbox-exec` leaves no wrapper process behind.
+
+`sandbox-exec` is marked deprecated by Apple but ships with every macOS
+release and is what other agent sandboxes build on.
+
 ## Requirements
 
+- macOS: nothing beyond the system's `/usr/bin/sandbox-exec`.
 - Linux with unprivileged user namespaces.
 - `bwrap` ≥ 0.10 for overlay mounts (uses `--overlay-src`, `--overlay`, `--tmp-overlay`).
   Overlays need a non-setuid `bwrap` and a kernel with unprivileged overlayfs (≥ 5.11).
@@ -121,8 +158,8 @@ task clean          # remove build artifacts
 
 ## Notes
 
-- `box` replaces itself with `bwrap` via `exec`, so signals and the terminal
-  behave as if the program ran directly.
+- `box` replaces itself with `bwrap` (or `sandbox-exec`) via `exec`, so
+  signals and the terminal behave as if the program ran directly.
 - `box` sets bwrap's `argv[0]` to `box:<name>`, which is how `box ps` finds
   its sandboxes; stats cover the whole process tree under that bwrap.
 - Mounts are applied parents-first, so a tmpfs on `$HOME` never hides a bind

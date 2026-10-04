@@ -22,7 +22,11 @@ jobs:
           version: v2.14.0
 
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -32,3 +36,20 @@ jobs:
         run: go test ./...
       - name: Build
         run: go build ./...
+      - name: Smoke test (sandbox-exec)
+        if: runner.os == 'macOS'
+        run: |
+          go build -o box .
+          ./box show sh
+          ./box run sh -c '
+            echo "sandboxed as $(id -un) in $PWD"
+            if touch /usr/x 2>/dev/null; then echo "FAIL: /usr is writable" >&2; exit 1; fi
+            if ls "$HOME/" >/dev/null 2>&1; then echo "FAIL: \$HOME is listable" >&2; exit 1; fi
+            touch box-smoke && rm box-smoke
+            echo ok
+          '
+          ./box run sleep 10 &
+          sleep 2
+          ./box ps | tee ps.out
+          awk '$2 == "sleep" { found = 1 } END { exit !found }' ps.out
+          wait

@@ -1,5 +1,6 @@
-// Command box runs programs inside a bubblewrap (bwrap) sandbox using
-// defaults and per-binary overrides from ~/.config/box/box.toml.
+// Command box runs programs inside a sandbox (bubblewrap on Linux,
+// sandbox-exec on macOS) using defaults and per-binary overrides from
+// ~/.config/box/box.toml.
 package main
 
 import (
@@ -20,11 +21,11 @@ import (
 
 var version = "dev"
 
-const usage = `box - run programs inside a bubblewrap sandbox
+const usage = `box - run programs inside a sandbox (bwrap on Linux, sandbox-exec on macOS)
 
 Usage:
   box run [-n] [-v] [-c FILE] <command> [args...]   run command in a sandbox
-  box show [-c FILE] <command> [args...]             print the bwrap command line
+  box show [-c FILE] <command> [args...]             print the sandbox command line
   box config [-c FILE] [<command>]                   print the effective profile
   box init [-c FILE]                                 write the default config file
   box clean [<command>]                              delete persistent overlay layers
@@ -32,8 +33,8 @@ Usage:
   box version
 
 Flags:
-  -n, --dry-run   print the bwrap command instead of running it
-  -v, --verbose   print the bwrap command before running it
+  -n, --dry-run   print the sandbox command instead of running it
+  -v, --verbose   print the sandbox command before running it
   -c, --config    configuration file (default $BOX_CONFIG or ~/.config/box/box.toml)
 `
 
@@ -210,7 +211,7 @@ func cmdClean(argv []string) error {
 }
 
 func cmdPs(argv []string) error {
-	list, err := procs.List("/proc", sandbox.ProcTitlePrefix)
+	list, err := procs.Sandboxes()
 	if err != nil {
 		return err
 	}

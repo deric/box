@@ -1,9 +1,11 @@
 package procs
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -91,5 +93,66 @@ func TestListReal(t *testing.T) {
 	}
 	if _, err := List("/proc", "box-test-no-such-prefix:"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestParsePS(t *testing.T) {
+	now := time.Unix(100000, 0)
+	out := "    1     0  12345   1:02.50 3-04:05:06\n" +
+		"  200     1    100   0:00.01      00:07\n" +
+		"  garbage line\n" +
+		"  300     1     10 123:00.00   01:00:00\n"
+	all := parsePS([]byte(out), now)
+	if len(all) != 3 {
+		t.Fatalf("got %d processes, want 3", len(all))
+	}
+	p := all[1]
+	if p.ppid != 0 || p.rss != 12345*1024 || p.cpu != 62500*time.Millisecond {
+		t.Errorf("unexpected pid 1: %+v", p)
+	}
+	if want := now.Add(-(3*24*time.Hour + 4*time.Hour + 5*time.Minute + 6*time.Second)); !p.started.Equal(want) {
+		t.Errorf("started = %v, want %v", p.started, want)
+	}
+	if all[200].started != now.Add(-7*time.Second) || all[300].cpu != 123*time.Minute {
+		t.Errorf("unexpected %+v %+v", all[200], all[300])
+	}
+}
+
+func procArgs(argv, env []string) []byte {
+	buf := binary.NativeEndian.AppendUint32(nil, uint32(len(argv)))
+	buf = append(buf, "/bin/exe\x00\x00\x00\x00"...)
+	for _, s := range append(append(argv, env...), "", "ptr_munge=") {
+		buf = append(buf, s+"\x00"...)
+	}
+	return buf
+}
+
+func TestParseProcArgs(t *testing.T) {
+	argv, env := parseProcArgs(procArgs([]string{"claude", "", "--resume"}, []string{"A=1", "BOX_NAME=claude"}))
+	if !slices.Equal(argv, []string{"claude", "", "--resume"}) || !slices.Equal(env, []string{"A=1", "BOX_NAME=claude"}) {
+		t.Errorf("argv=%q env=%q", argv, env)
+	}
+	if argv, env := parseProcArgs([]byte{1, 0}); argv != nil || env != nil {
+		t.Error("short buffer should yield nothing")
+	}
+}
+
+func TestGroupByEnv(t *testing.T) {
+	start := time.Unix(1000, 0)
+	tag := []string{"BOX_NAME=claude", "BOX_DIR=/work"}
+	all := map[int]*proc{
+		10: {pid: 10, ppid: 1, argv: []string{"zsh"}, started: start},
+		11: {pid: 11, ppid: 10, argv: []string{"claude", "-c"}, env: tag, cpu: time.Second, rss: 100, started: start.Add(time.Second)},
+		12: {pid: 12, ppid: 11, argv: []string{"node"}, env: tag, cpu: time.Second, rss: 50},
+		13: {pid: 13, ppid: 12, cpu: time.Second}, // unreadable, still counted
+	}
+	got := group(all, envTag("BOX_NAME", "BOX_DIR"))
+	if len(got) != 1 {
+		t.Fatalf("got %+v", got)
+	}
+	s := got[0]
+	if s.PID != 11 || s.Name != "claude" || s.Dir != "/work" || s.Procs != 3 || s.CPU != 3*time.Second ||
+		s.RSS != 150 || !slices.Equal(s.Command, []string{"claude", "-c"}) {
+		t.Errorf("unexpected sandbox %+v", s)
 	}
 }

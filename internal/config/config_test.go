@@ -6,7 +6,7 @@ import (
 )
 
 func TestDefaultTOMLParses(t *testing.T) {
-	c, err := Parse(DefaultTOML)
+	c, err := Parse(DefaultLinuxTOML)
 	if err != nil {
 		t.Fatalf("default config does not parse: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestParseRejectsUnknownKeys(t *testing.T) {
 }
 
 func TestDefaultTOMLClaude(t *testing.T) {
-	c, err := Parse(DefaultTOML)
+	c, err := Parse(DefaultLinuxTOML)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,5 +110,44 @@ func TestDefaultTOMLClaude(t *testing.T) {
 		if !contains(p.RWBinds, want) {
 			t.Errorf("rw_binds = %v, missing %q", p.RWBinds, want)
 		}
+	}
+}
+
+func TestDefaultTOMLDarwin(t *testing.T) {
+	c, err := Parse(DefaultDarwinTOML)
+	if err != nil {
+		t.Fatalf("darwin default config does not parse: %v", err)
+	}
+	p := c.Resolve("claude")
+	if !p.Network || len(p.Overlays) != 0 || p.Env["BOX_SANDBOX"] != "1" {
+		t.Errorf("unexpected darwin defaults: %+v", p)
+	}
+	for _, want := range []string{"/System", "/usr"} {
+		if !contains(p.ROBinds, want) {
+			t.Errorf("ro_binds = %v, missing %q", p.ROBinds, want)
+		}
+	}
+	for _, want := range []string{"$PWD", "?$TMPDIR", "?~/.claude"} {
+		if !contains(p.RWBinds, want) {
+			t.Errorf("rw_binds = %v, missing %q", p.RWBinds, want)
+		}
+	}
+	if defaultFor("darwin") != DefaultDarwinTOML || defaultFor("linux") != DefaultLinuxTOML {
+		t.Error("defaultFor picks the wrong file")
+	}
+}
+
+func TestResolveSeatbeltRules(t *testing.T) {
+	c, err := Parse(`
+[default]
+seatbelt_rules = ["(allow a)"]
+[binaries.x]
+seatbelt_rules = ["(allow b)"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := c.Resolve("x").SeatbeltRules, []string{"(allow a)", "(allow b)"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("seatbelt_rules = %v, want %v", got, want)
 	}
 }

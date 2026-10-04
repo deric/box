@@ -1,0 +1,69 @@
+# box - macOS sandbox (sandbox-exec / Seatbelt) configuration.
+#
+# Paths may use ~, $HOME, $PWD (the directory box is started from) and any
+# other environment variable. Paths that do not exist on the host are skipped
+# with a warning; prefix a path with "?" to skip it silently.
+#
+# The [default] section applies to every binary. A [binaries.<name>] section
+# overrides it for one binary: list values are appended to the defaults
+# (use drop_binds to remove inherited entries), scalar values replace them.
+#
+# Seatbelt cannot remap the filesystem the way bubblewrap does on Linux:
+# everything not listed below is denied, symlinks such as /tmp -> /private/tmp
+# are resolved, "tmpfs" paths are hidden (their contents cannot be read or
+# written), and overlays are exposed read-only.
+
+[default]
+# Host paths readable inside the sandbox.
+ro_binds = [
+  "/usr", "/bin", "/sbin", "/System", "/Library", "/etc",
+  "?/private/var/select", "?/private/var/db/timezone", "?/private/var/db/dyld",
+  "?/private/var/db/xcode_select_link", "?/private/var/run/resolv.conf",
+  "?/opt/homebrew", "?/Applications/Xcode.app",
+  "?~/.local/share/mise", "?~/.config/mise", "?~/.gitconfig",
+]
+
+# Host paths readable and writable. $TMPDIR is the per-user temporary
+# directory under /var/folders.
+rw_binds = ["$PWD", "/tmp", "?$TMPDIR"]
+
+# Device paths readable and writable (the usual /dev nodes are always allowed).
+dev_binds = []
+
+# Paths hidden from the sandbox even when a parent path is exposed. The
+# paths listed above underneath them stay accessible.
+tmpfs = ["$HOME"]
+
+# Overlays are not available on macOS; listed paths are exposed read-only.
+overlays = []
+
+# Allow network access. Without it only Unix sockets under exposed paths work.
+network = true
+
+# Start from an empty environment instead of inheriting the host environment.
+clear_env = false
+
+# Environment variables to set / unset inside the sandbox.
+env = { BOX_SANDBOX = "1" }
+unset_env = []
+
+# Allow reading the resolved executable when it lives outside the paths above.
+bind_binary = true
+
+# Raw arguments passed to sandbox-exec, e.g. ["-D", "KEY=value"].
+extra_args = []
+
+# Raw SBPL rules appended to the generated profile, for anything not covered,
+# e.g. '(allow mach-lookup (global-name "com.apple.pasteboard.1"))'.
+seatbelt_rules = []
+
+# Claude Code keeps its settings, sessions and memory in ~/.claude, its global
+# state in ~/.claude.json, and its login credentials in the login keychain.
+[binaries.claude]
+rw_binds = ["?~/.claude", "?~/.claude.json", "?~/Library/Keychains"]
+
+# Example per-binary sections:
+#
+# [binaries.untrusted-tool]
+# network = false
+# drop_binds = ["/tmp", "?$TMPDIR"]
