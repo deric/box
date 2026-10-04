@@ -221,14 +221,18 @@ func cmdPs(argv []string) error {
 	}
 	now := time.Now()
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PID\tNAME\tPROCS\tCPU\tMEM\tUPTIME\tDIR\tCOMMAND")
+	if _, err := fmt.Fprintln(w, "PID\tNAME\tPROCS\tCPU\tMEM\tUPTIME\tDIR\tCOMMAND"); err != nil {
+		return err
+	}
 	for _, s := range list {
 		if filter != "" && s.Name != filter {
 			continue
 		}
-		fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
 			s.PID, s.Name, s.Procs, formatDuration(s.CPU), formatBytes(s.RSS),
-			formatDuration(now.Sub(s.Started)), s.Dir, strings.Join(s.Command, " "))
+			formatDuration(now.Sub(s.Started)), s.Dir, strings.Join(s.Command, " ")); err != nil {
+			return err
+		}
 	}
 	return w.Flush()
 }
