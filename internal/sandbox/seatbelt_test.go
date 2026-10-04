@@ -48,9 +48,11 @@ func TestBuildSeatbelt(t *testing.T) {
 		Env:           map[string]string{"B": "2", "A": "1"},
 		UnsetEnv:      []string{"GONE"},
 		ClearEnv:      true,
+		PassEnv:       []string{"BOX_T_PASS"},
 		ExtraArgs:     []string{"-D", "K=V"},
 		SeatbeltRules: []string{`(allow mach-lookup (global-name "x"))`},
 	}
+	t.Setenv("BOX_T_PASS", "yes")
 	plan, err := buildSeatbelt(prof, Options{
 		Binary: "tool",
 		Args:   []string{"--flag"},
@@ -91,7 +93,7 @@ func TestBuildSeatbelt(t *testing.T) {
 		t.Error("seatbelt_rules must come last so they take precedence")
 	}
 
-	if want := []string{"A=1", "B=2", "BOX_NAME=tool", "BOX_DIR=" + cwd}; !slices.Equal(plan.Env, want) {
+	if want := []string{"BOX_T_PASS=yes", "A=1", "B=2", "BOX_NAME=tool", "BOX_DIR=" + cwd}; !slices.Equal(plan.Env, want) {
 		t.Errorf("env = %q, want %q", plan.Env, want)
 	}
 	if !plan.ClearEnv || !slices.Equal(plan.UnsetEnv, []string{"GONE"}) || plan.Dir != cwd {
@@ -108,7 +110,7 @@ func TestBuildSeatbelt(t *testing.T) {
 	if !overlayWarned || !hostnameWarned || len(plan.Warnings) != 2 {
 		t.Errorf("want overlay and hostname warnings, got %q", plan.Warnings)
 	}
-	if cmd := plan.Command(); !strings.HasPrefix(cmd, "env -i -u GONE A=1 B=2 BOX_NAME=tool ") {
+	if cmd := plan.Command(); !strings.HasPrefix(cmd, "env -i -u GONE BOX_T_PASS=yes A=1 B=2 BOX_NAME=tool ") {
 		t.Errorf("command = %s", cmd)
 	}
 }

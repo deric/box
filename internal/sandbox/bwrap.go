@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"box/internal/config"
 )
@@ -19,6 +20,11 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 	args := []string{"--unshare-all"}
 	if prof.Network {
 		args = append(args, "--share-net")
+	}
+	if prof.DisableUserns {
+		// --unshare-all only tries to unshare the user namespace;
+		// --disable-userns insists on it.
+		args = append(args, "--unshare-user", "--disable-userns")
 	}
 	if prof.Hostname != "" {
 		args = append(args, "--hostname", prof.Hostname)
@@ -36,6 +42,10 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 	args = append(args, "--chdir", opts.Cwd)
 	if prof.ClearEnv {
 		args = append(args, "--clearenv")
+		for _, kv := range passEnv(prof) {
+			k, v, _ := strings.Cut(kv, "=")
+			args = append(args, "--setenv", k, v)
+		}
 	}
 	for _, k := range sortedKeys(prof.Env) {
 		args = append(args, "--setenv", k, prof.Env[k])

@@ -35,9 +35,12 @@ box ps                          # list running sandboxes with process count, CPU
 | network                          | shared with the host                                 |
 | `/proc`, `/dev`                  | fresh, minimal                                       |
 | PID, IPC, UTS, cgroup namespaces | unshared; hostname is `box`                          |
+| user namespaces                  | cannot be created inside (`--disable-userns`)        |
+| terminal                         | new session (`--new-session`)                        |
+| environment                      | cleared; only `pass_env` variables (`HOME`, `PATH`, `TERM`, `LANG`, `LC_*`, proxies, ...) and `BOX_SANDBOX=1` are set |
 
-Everything is driven by `--unshare-all`; the environment is inherited and
-`BOX_SANDBOX=1` is set so programs can detect they are sandboxed.
+Everything is driven by `--unshare-all`; `BOX_SANDBOX=1` lets programs detect
+they are sandboxed.
 
 ## Configuration
 
@@ -55,12 +58,17 @@ private_tmp = true
 overlays = [{ path = "~/.local/share/mise", persist = true }]
 network  = true
 hostname = "box"
-env      = { BOX_SANDBOX = "1" }
+new_session    = true
+disable_userns = true
+clear_env = true
+pass_env  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG", "LC_*"]
+env       = { BOX_SANDBOX = "1" }
 
 [binaries.claude]
 overlays   = [{ path = "?~/.claude", persist = false }]
 rw_binds   = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
 copy_files = ["?~/.claude.json"]
+pass_env   = ["ANTHROPIC_*", "CLAUDE_*"]
 
 [binaries.trusted-tool]
 private_tmp = false          # share the host's /tmp instead
@@ -87,10 +95,12 @@ with `?` to skip silently.
 | `network`         | bool              | share the host network                                         |
 | `hostname`        | string            | hostname inside the sandbox; empty keeps the host's            |
 | `new_session`     | bool              | `--new-session` (blocks TIOCSTI, breaks shell job control)     |
+| `disable_userns`  | bool              | `--disable-userns`: no user namespaces inside, so no nested sandboxes |
 | `die_with_parent` | bool              | kill the sandbox when `box` dies                               |
 | `clear_env`       | bool              | start from an empty environment                                |
+| `pass_env`        | list              | with `clear_env`: host variables to pass through, names or patterns (`LC_*`) |
 | `env`             | table             | variables to set                                               |
-| `unset_env`       | list              | variables to unset                                             |
+| `unset_env`       | list              | variables to unset (also removes `pass_env` entries)           |
 | `bind_binary`     | bool              | mount the resolved executable if no other mount exposes it     |
 | `extra_args`      | list              | raw arguments appended to `bwrap` / `sandbox-exec`             |
 | `seatbelt_rules`  | list              | raw SBPL rules appended to the macOS profile                   |
@@ -117,8 +127,8 @@ the Linux sandbox as closely as Seatbelt allows:
 | `network = false`: own empty netns    | no IP traffic at all, loopback included                       |
 | Unix sockets under mounted paths      | Unix sockets under exposed paths                              |
 | PID / IPC namespaces                  | processes may only inspect and signal their own sandbox; Mach services are limited to a short list (name lookup, logging, and with network: DNS and TLS trust) |
-| `hostname`, `new_session`             | not supported (warned and ignored)                            |
-| `clear_env`, `env`, `unset_env`       | applied by `box` before starting `sandbox-exec`               |
+| `hostname`, `new_session`, `disable_userns` | not supported (warned and ignored)                      |
+| `clear_env`, `pass_env`, `env`, `unset_env` | applied by `box` before starting `sandbox-exec`         |
 
 The macOS default config (written by `box init` on a Mac) exposes the system
 directories, Homebrew, the current directory, `/tmp` and `$TMPDIR`, and hides
@@ -139,7 +149,8 @@ release and is what other agent sandboxes build on.
 
 - macOS: nothing beyond the system's `/usr/bin/sandbox-exec`.
 - Linux with unprivileged user namespaces.
-- `bwrap` ≥ 0.10 for overlay mounts (uses `--overlay-src`, `--overlay`, `--tmp-overlay`).
+- `bwrap` ≥ 0.8 for `disable_userns`, ≥ 0.10 for overlay mounts (uses
+  `--overlay-src`, `--overlay`, `--tmp-overlay`).
   Overlays need a non-setuid `bwrap` and a kernel with unprivileged overlayfs (≥ 5.11).
 - Go 1.26 to build: `go build -o box .`
 
@@ -173,6 +184,15 @@ task clean          # remove build artifacts
   its sandboxes; stats cover the whole process tree under that bwrap.
 - Mounts are applied parents-first, so a tmpfs on `$HOME` never hides a bind
   or overlay placed underneath it.
+- The Linux defaults clear the environment and pass through an explicit list
+  (`pass_env`), so tokens and session details in the host environment stay
+  outside; add what a program needs to its section, as the claude section
+  does with `ANTHROPIC_*` and `CLAUDE_*`. `disable_userns` keeps programs
+  from building their own namespaces, which also means `box` inside `box`
+  and Claude Code's own bwrap-based bash sandbox cannot start; set it to
+  `false` in that binary's section if you rely on them. `new_session`
+  detaches from the controlling terminal's session, so interactive shells
+  inside lose job control.
 - `copy_files` opens each file before `exec` and hands the descriptor to
   `bwrap`, which writes a copy at the same path with the host file's mode
   (`box show` prints the matching `N<file` redirection). Claude Code's

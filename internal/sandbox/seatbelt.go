@@ -94,6 +94,9 @@ func buildSeatbelt(prof config.Profile, opts Options, exe string) (*Plan, error)
 	if prof.NewSession {
 		plan.Warnings = append(plan.Warnings, "new_session is not supported by sandbox-exec; ignored")
 	}
+	if prof.DisableUserns {
+		plan.Warnings = append(plan.Warnings, "disable_userns is not supported by sandbox-exec; ignored")
+	}
 
 	var b strings.Builder
 	b.WriteString(seatbeltBase)
@@ -113,6 +116,9 @@ func buildSeatbelt(prof config.Profile, opts Options, exe string) (*Plan, error)
 
 	plan.ClearEnv = prof.ClearEnv
 	plan.UnsetEnv = prof.UnsetEnv
+	if prof.ClearEnv {
+		plan.Env = append(plan.Env, passEnv(prof)...)
+	}
 	for _, k := range sortedKeys(prof.Env) {
 		plan.Env = append(plan.Env, k+"="+prof.Env[k])
 	}

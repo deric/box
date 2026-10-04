@@ -11,8 +11,14 @@ func TestDefaultTOMLParses(t *testing.T) {
 		t.Fatalf("default config does not parse: %v", err)
 	}
 	p := c.Resolve("anything")
-	if !p.Network || p.Hostname != "box" || !p.BindBinary || !p.DieWithParent {
+	if !p.Network || p.Hostname != "box" || !p.BindBinary || !p.DieWithParent ||
+		!p.NewSession || !p.DisableUserns || !p.ClearEnv {
 		t.Errorf("unexpected default scalars: %+v", p)
+	}
+	for _, want := range []string{"HOME", "PATH", "TERM", "LC_*"} {
+		if !contains(p.PassEnv, want) {
+			t.Errorf("pass_env = %v, missing %q", p.PassEnv, want)
+		}
 	}
 	if len(p.Overlays) != 1 || p.Overlays[0].Path != "~/.local/share/mise" || !p.Overlays[0].Persist {
 		t.Errorf("unexpected default overlays: %+v", p.Overlays)
@@ -69,6 +75,24 @@ unset_env = ["A"]
 	}
 }
 
+func TestResolvePassEnv(t *testing.T) {
+	c, err := Parse(`
+[default]
+clear_env = true
+pass_env = ["HOME", "PATH", "TERM"]
+
+[binaries.agent]
+pass_env = ["API_*"]
+unset_env = ["TERM"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := c.Resolve("agent").PassEnv, []string{"HOME", "PATH", "API_*"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("pass_env = %v, want %v", got, want)
+	}
+}
+
 func TestResolveInheritFalse(t *testing.T) {
 	c, err := Parse(`
 [default]
@@ -119,6 +143,9 @@ func TestDefaultTOMLClaude(t *testing.T) {
 	}
 	if got, want := p.CopyFiles, []string{"?~/.claude.json"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("copy_files = %v, want %v", got, want)
+	}
+	if !contains(p.PassEnv, "HOME") || !contains(p.PassEnv, "ANTHROPIC_*") {
+		t.Errorf("pass_env = %v, want defaults plus ANTHROPIC_*", p.PassEnv)
 	}
 	if contains(p.RWBinds, "/tmp") || contains(p.Tmpfs, "/tmp") {
 		t.Errorf("/tmp must come from private_tmp, not rw_binds %v or tmpfs %v", p.RWBinds, p.Tmpfs)

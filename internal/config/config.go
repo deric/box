@@ -92,8 +92,10 @@ type Section struct {
 	Network       *bool             `toml:"network"`
 	Hostname      *string           `toml:"hostname"`
 	NewSession    *bool             `toml:"new_session"`
+	DisableUserns *bool             `toml:"disable_userns"`
 	DieWithParent *bool             `toml:"die_with_parent"`
 	ClearEnv      *bool             `toml:"clear_env"`
+	PassEnv       []string          `toml:"pass_env"`
 	Env           map[string]string `toml:"env"`
 	UnsetEnv      []string          `toml:"unset_env"`
 	BindBinary    *bool             `toml:"bind_binary"`
@@ -120,8 +122,10 @@ type Profile struct {
 	Network       bool              `toml:"network"`
 	Hostname      string            `toml:"hostname"`
 	NewSession    bool              `toml:"new_session"`
+	DisableUserns bool              `toml:"disable_userns"`
 	DieWithParent bool              `toml:"die_with_parent"`
 	ClearEnv      bool              `toml:"clear_env"`
+	PassEnv       []string          `toml:"pass_env"`
 	Env           map[string]string `toml:"env"`
 	UnsetEnv      []string          `toml:"unset_env"`
 	BindBinary    bool              `toml:"bind_binary"`
@@ -225,6 +229,7 @@ func (c *Config) Resolve(name string) Profile {
 		Network:       pick(base.Network, sec.Network, true),
 		Hostname:      pick(base.Hostname, sec.Hostname, ""),
 		NewSession:    pick(base.NewSession, sec.NewSession, false),
+		DisableUserns: pick(base.DisableUserns, sec.DisableUserns, false),
 		DieWithParent: pick(base.DieWithParent, sec.DieWithParent, true),
 		ClearEnv:      pick(base.ClearEnv, sec.ClearEnv, false),
 		Env:           map[string]string{},
@@ -242,6 +247,7 @@ func (c *Config) Resolve(name string) Profile {
 	for _, k := range p.UnsetEnv {
 		delete(p.Env, k)
 	}
+	p.PassEnv = mergeList(base.PassEnv, sec.PassEnv, p.UnsetEnv)
 	return p
 }
 

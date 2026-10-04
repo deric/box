@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -479,6 +481,28 @@ func copyFile(expanded func(string) (string, bool), raw string, plan *Plan) *mou
 	}
 	plan.Files[fd] = src
 	return &mount{kind: kindFile, src: src, dest: src, fd: fd, mode: fi.Mode().Perm(), visible: true}
+}
+
+// passEnv returns the host variables selected by prof.PassEnv as KEY=VALUE
+// pairs sorted by name. Entries are names or path.Match patterns (LC_*).
+// Variables that env sets or unset_env removes are left out, so those
+// settings win.
+func passEnv(prof config.Profile) []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if _, fixed := prof.Env[k]; fixed || slices.Contains(prof.UnsetEnv, k) {
+			continue
+		}
+		for _, pat := range prof.PassEnv {
+			if ok, _ := path.Match(pat, k); ok {
+				out = append(out, kv)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // realPath resolves symlinks in p, returning p unchanged when that fails.

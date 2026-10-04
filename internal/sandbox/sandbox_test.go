@@ -241,6 +241,54 @@ func unixFcntl(fd int) (int, error) {
 	return int(flags), nil
 }
 
+func TestBuildClearEnvPassthrough(t *testing.T) {
+	home, cwd, _, bin := fixture(t)
+	t.Setenv("BOX_T_KEEP", "kept")
+	t.Setenv("BOX_T_LC_ALL", "C")
+	t.Setenv("BOX_T_LC_TIME", "de")
+	t.Setenv("BOX_T_FIXED", "host")
+	t.Setenv("BOX_T_GONE", "host")
+	t.Setenv("BOX_T_OTHER", "host")
+	prof := config.Profile{
+		ClearEnv:      true,
+		DisableUserns: true,
+		NewSession:    true,
+		PassEnv:       []string{"BOX_T_KEEP", "BOX_T_LC_*", "BOX_T_FIXED", "BOX_T_GONE", "BOX_T_MISSING"},
+		Env:           map[string]string{"BOX_T_FIXED": "box"},
+		UnsetEnv:      []string{"BOX_T_GONE"},
+	}
+	opts := Options{
+		Binary: "tool", Cwd: cwd, Home: home,
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}
+	plan, err := buildBwrap(prof, opts, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := " " + strings.Join(plan.Args, " ") + " "
+	want := " --clearenv --setenv BOX_T_KEEP kept --setenv BOX_T_LC_ALL C --setenv BOX_T_LC_TIME de" +
+		" --setenv BOX_T_FIXED box --unsetenv BOX_T_GONE "
+	if !strings.Contains(cmd, want) {
+		t.Errorf("missing %q in\n%s", want, cmd)
+	}
+	if strings.Contains(cmd, "BOX_T_OTHER") || strings.Contains(cmd, "BOX_T_MISSING") {
+		t.Errorf("unselected variables leaked into %s", cmd)
+	}
+	if !strings.Contains(cmd, " --unshare-all --unshare-user --disable-userns ") || !strings.Contains(cmd, " --new-session ") {
+		t.Errorf("missing --disable-userns or --new-session in %s", cmd)
+	}
+
+	// Without clear_env the host environment is inherited; nothing to pass.
+	prof.ClearEnv = false
+	plan, err = buildBwrap(prof, opts, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd := strings.Join(plan.Args, " "); strings.Contains(cmd, "--setenv BOX_T_KEEP") || strings.Contains(cmd, "--clearenv") {
+		t.Errorf("unexpected passthrough without clear_env: %s", cmd)
+	}
+}
+
 func TestBuildUnknownCommand(t *testing.T) {
 	_, err := buildBwrap(config.Profile{}, Options{
 		Binary: "nope", Cwd: "/", Home: "/",

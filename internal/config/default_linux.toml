@@ -52,16 +52,31 @@ network = true
 hostname = "box"
 
 # Start a new session (setsid). Protects against TIOCSTI terminal injection
-# but breaks shell job control for interactive programs.
-new_session = false
+# but breaks shell job control (fg, bg, ^Z) for interactive programs.
+new_session = true
+
+# Forbid creating user namespaces inside the sandbox, so a program cannot
+# build its own namespaces to escape or hide. Nested sandboxes (box inside
+# box, Claude Code's own bwrap-based bash sandbox) stop working.
+disable_userns = true
 
 # Kill the sandbox when box itself dies.
 die_with_parent = true
 
-# Start from an empty environment instead of inheriting the host environment.
-clear_env = false
+# Start from an empty environment and pass through only the host variables
+# listed in pass_env (names or patterns such as "LC_*"), so secrets and
+# session details in the host environment stay outside.
+clear_env = true
+pass_env = [
+  "HOME", "USER", "LOGNAME", "SHELL", "PATH",
+  "TERM", "COLORTERM", "LANG", "LC_*", "TZ",
+  "EDITOR", "VISUAL", "PAGER",
+  "XDG_*_HOME",
+  "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+]
 
-# Environment variables to set / unset inside the sandbox.
+# Environment variables to set / unset inside the sandbox. unset_env also
+# removes entries from pass_env.
 env = { BOX_SANDBOX = "1" }
 unset_env = []
 
@@ -81,6 +96,7 @@ extra_args = []
 overlays = [{ path = "?~/.claude", persist = false }]
 rw_binds = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
 copy_files = ["?~/.claude.json"]
+pass_env = ["ANTHROPIC_*", "CLAUDE_*"]
 
 # Example per-binary sections:
 #
