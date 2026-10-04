@@ -1,0 +1,71 @@
+# box - bubblewrap (bwrap) wrapper configuration.
+#
+# Paths may use ~, $HOME, $PWD (the directory box is started from) and any
+# other environment variable. Paths that do not exist on the host are skipped
+# with a warning; prefix a path with "?" to skip it silently.
+#
+# The [default] section applies to every binary. A [binaries.<name>] section
+# overrides it for one binary: list values are appended to the defaults
+# (use drop_binds to remove inherited entries), scalar values replace them.
+
+[default]
+# Host paths mounted read-only.
+ro_binds = [
+  "/bin", "/sbin", "/lib", "?/lib32", "/lib64", "/usr",
+  "/etc", "?/opt", "?/run/systemd/resolve",
+  "?~/.config/mise", "?~/.gitconfig",
+]
+
+# Host paths mounted read-write.
+rw_binds = ["$PWD", "/tmp"]
+
+# Device paths mounted read-write with device access (e.g. "/dev/dri").
+dev_binds = []
+
+# Fresh tmpfs mounts. $HOME is a tmpfs so stray writes vanish on exit while
+# the explicitly listed paths underneath it stay visible.
+tmpfs = ["$HOME", "/var/tmp"]
+
+# Overlay mounts: the host directory is visible underneath, writes go to an
+# upper layer and never touch the host. With persist = true the upper layer is
+# kept per binary under ~/.local/state/box/overlays (see `box clean`); with
+# persist = false it is discarded when the sandbox exits.
+overlays = [
+  { path = "~/.local/share/mise", persist = true },
+]
+
+# Share the host network namespace.
+network = true
+
+# Hostname inside the sandbox (empty keeps the host name).
+hostname = "box"
+
+# Start a new session (setsid). Protects against TIOCSTI terminal injection
+# but breaks shell job control for interactive programs.
+new_session = false
+
+# Kill the sandbox when box itself dies.
+die_with_parent = true
+
+# Start from an empty environment instead of inheriting the host environment.
+clear_env = false
+
+# Environment variables to set / unset inside the sandbox.
+env = { BOX_SANDBOX = "1" }
+unset_env = []
+
+# Mount the resolved executable read-only when it lives outside the paths above.
+bind_binary = true
+
+# Raw arguments appended to the bwrap command line, for anything not covered.
+extra_args = []
+
+# Example per-binary sections:
+#
+# [binaries.open-agent]
+# rw_binds = ["~/.config/open-agent", "~/.cache/open-agent"]
+#
+# [binaries.untrusted-tool]
+# network = false
+# drop_binds = ["/tmp"]
+# tmpfs = ["/tmp"]
