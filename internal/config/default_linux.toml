@@ -59,7 +59,7 @@ allow_hosts = [
   "github.com", "*.github.com", "*.githubusercontent.com",
   "registry.npmjs.org", "proxy.golang.org", "sum.golang.org",
   "pypi.org", "files.pythonhosted.org", "crates.io", "*.crates.io",
-  "storage.googleapis.com",
+  "storage.googleapis.com", "gitlab.com", "go.dev", "dl.google.com"
 ]
 
 # Hostname inside the sandbox (empty keeps the host name).
