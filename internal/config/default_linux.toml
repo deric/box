@@ -110,7 +110,10 @@ overlays = [{ path = "?~/.claude", persist = false }]
 rw_binds = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
 copy_files = ["?~/.claude.json"]
 pass_env = ["ANTHROPIC_*", "CLAUDE_*"]
-allow_hosts = ["*.anthropic.com", "claude.ai", "*.claude.ai", "*.claude.com", "*.sentry.io"]
+allow_hosts = [
+  "*.anthropic.com", "claude.ai", "*.claude.ai", "*.claude.com", "*.sentry.io",
+  "storage.googleapis.com",
+]
 
 # Example per-binary sections:
 #
