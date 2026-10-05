@@ -59,6 +59,7 @@ allow_hosts = [
   "github.com", "*.github.com", "*.githubusercontent.com",
   "registry.npmjs.org", "proxy.golang.org", "sum.golang.org",
   "pypi.org", "files.pythonhosted.org", "crates.io", "*.crates.io",
+  "storage.googleapis.com",
 ]
 
 # Hostname inside the sandbox (empty keeps the host name).
@@ -112,7 +113,6 @@ copy_files = ["?~/.claude.json"]
 pass_env = ["ANTHROPIC_*", "CLAUDE_*"]
 allow_hosts = [
   "*.anthropic.com", "claude.ai", "*.claude.ai", "*.claude.com", "*.sentry.io",
-  "storage.googleapis.com",
 ]
 
 # Example per-binary sections:
