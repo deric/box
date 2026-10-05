@@ -11,9 +11,12 @@ func TestDefaultTOMLParses(t *testing.T) {
 		t.Fatalf("default config does not parse: %v", err)
 	}
 	p := c.Resolve("anything")
-	if !p.Network || p.Hostname != "box" || !p.BindBinary || !p.DieWithParent ||
+	if p.Network || !p.Proxy || p.Hostname != "box" || !p.BindBinary || !p.DieWithParent ||
 		!p.NewSession || !p.DisableUserns || !p.ClearEnv {
 		t.Errorf("unexpected default scalars: %+v", p)
+	}
+	if !contains(p.AllowHosts, "github.com") || !contains(p.AllowHosts, "*.github.com") {
+		t.Errorf("allow_hosts = %v", p.AllowHosts)
 	}
 	for _, want := range []string{"HOME", "PATH", "TERM", "LC_*"} {
 		if !contains(p.PassEnv, want) {
@@ -147,6 +150,9 @@ func TestDefaultTOMLClaude(t *testing.T) {
 	if !contains(p.PassEnv, "HOME") || !contains(p.PassEnv, "ANTHROPIC_*") {
 		t.Errorf("pass_env = %v, want defaults plus ANTHROPIC_*", p.PassEnv)
 	}
+	if !contains(p.AllowHosts, "*.anthropic.com") || !contains(p.AllowHosts, "github.com") {
+		t.Errorf("allow_hosts = %v, want defaults plus *.anthropic.com", p.AllowHosts)
+	}
 	if contains(p.RWBinds, "/tmp") || contains(p.Tmpfs, "/tmp") {
 		t.Errorf("/tmp must come from private_tmp, not rw_binds %v or tmpfs %v", p.RWBinds, p.Tmpfs)
 	}
@@ -161,7 +167,7 @@ func TestDefaultTOMLDarwin(t *testing.T) {
 		t.Fatalf("darwin default config does not parse: %v", err)
 	}
 	p := c.Resolve("claude")
-	if !p.Network || len(p.Overlays) != 0 || p.Env["BOX_SANDBOX"] != "1" {
+	if !p.Network || p.Proxy || len(p.Overlays) != 0 || p.Env["BOX_SANDBOX"] != "1" {
 		t.Errorf("unexpected darwin defaults: %+v", p)
 	}
 	for _, want := range []string{"/System", "/usr"} {

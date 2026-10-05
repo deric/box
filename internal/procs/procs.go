@@ -134,13 +134,22 @@ func ticks(n uint64) time.Duration {
 	return time.Duration(n) * time.Second / clockTicks
 }
 
-// parseArgs extracts the sandboxed command (everything after "--") and the
-// last --chdir from a bwrap argument list.
+// parseArgs extracts the sandboxed command (everything after "--", minus
+// the `box _forward` wrapper that exposes the proxy) and the last --chdir
+// from a bwrap argument list.
 func parseArgs(args []string) (cmd []string, dir string) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--":
-			return args[i+1:], dir
+			cmd = args[i+1:]
+			if len(cmd) > 1 && cmd[1] == "_forward" {
+				for j, a := range cmd {
+					if a == "--" {
+						return cmd[j+1:], dir
+					}
+				}
+			}
+			return cmd, dir
 		case "--chdir":
 			if i+1 < len(args) {
 				dir = args[i+1]

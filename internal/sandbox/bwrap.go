@@ -53,7 +53,24 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 	for _, k := range prof.UnsetEnv {
 		args = append(args, "--unsetenv", k)
 	}
+	if plan.Proxy != nil {
+		for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+			if _, set := prof.Env[k]; !set {
+				args = append(args, "--setenv", k, "http://"+ProxyAddr)
+			}
+		}
+		for _, k := range []string{"NO_PROXY", "no_proxy"} {
+			if _, set := prof.Env[k]; !set {
+				args = append(args, "--setenv", k, "localhost,127.0.0.1,::1")
+			}
+		}
+	}
 	args = append(args, prof.ExtraArgs...)
+	if plan.Proxy != nil {
+		// The forwarder exposes the proxy socket on loopback, then runs
+		// the command as its child.
+		args = append(args, "--", plan.Self, "_forward", "-s", ProxySocket, "-l", ProxyAddr)
+	}
 	args = append(args, "--", opts.Binary)
 	args = append(args, opts.Args...)
 	plan.Args = args

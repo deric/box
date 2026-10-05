@@ -45,8 +45,21 @@ overlays = [
 # the same path, but changes it makes stay inside and vanish on exit.
 copy_files = []
 
-# Share the host network namespace.
-network = true
+# Network. With network = false the sandbox gets its own, empty network
+# namespace (loopback only). proxy = true then starts an HTTP proxy on the
+# host that the sandbox reaches through a unix socket bound into it, and only
+# hosts matching allow_hosts can be reached: a name matches exactly, "*.x"
+# matches anything under x, "*" everything. Inside, HTTP_PROXY, HTTPS_PROXY
+# and NO_PROXY point at the proxy; programs that ignore them have no network.
+# Denied requests are logged to /tmp/box/<binary>-<pid>.log. Set
+# network = true to share the host network instead.
+network = false
+proxy = true
+allow_hosts = [
+  "github.com", "*.github.com", "*.githubusercontent.com",
+  "registry.npmjs.org", "proxy.golang.org", "sum.golang.org",
+  "pypi.org", "files.pythonhosted.org", "crates.io", "*.crates.io",
+]
 
 # Hostname inside the sandbox (empty keeps the host name).
 hostname = "box"
@@ -97,6 +110,7 @@ overlays = [{ path = "?~/.claude", persist = false }]
 rw_binds = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
 copy_files = ["?~/.claude.json"]
 pass_env = ["ANTHROPIC_*", "CLAUDE_*"]
+allow_hosts = ["*.anthropic.com", "claude.ai", "*.claude.ai", "*.claude.com", "*.sentry.io"]
 
 # Example per-binary sections:
 #
@@ -106,3 +120,4 @@ pass_env = ["ANTHROPIC_*", "CLAUDE_*"]
 #
 # [binaries.untrusted-tool]
 # network = false
+# proxy = false             # no network at all

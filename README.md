@@ -32,7 +32,7 @@ box ps                          # list running sandboxes with process count, CPU
 | `~/.local/share/mise`            | overlay: host content visible, writes land in a per-binary upper layer under `~/.local/state/box/overlays/` |
 | `~/.claude` (claude only)        | temporary overlay: host content visible, writes discarded on exit; `projects/` and `.credentials.json` read-write |
 | `~/.claude.json` (claude only)   | private copy of the host file                        |
-| network                          | shared with the host                                 |
+| network                          | own empty namespace; HTTP(S) only through an allowlisting proxy on the host (`allow_hosts`) |
 | `/proc`, `/dev`                  | fresh, minimal                                       |
 | PID, IPC, UTS, cgroup namespaces | unshared; hostname is `box`                          |
 | user namespaces                  | cannot be created inside (`--disable-userns`)        |
@@ -41,6 +41,22 @@ box ps                          # list running sandboxes with process count, CPU
 
 Everything is driven by `--unshare-all`; `BOX_SANDBOX=1` lets programs detect
 they are sandboxed.
+
+### Network
+
+The sandbox has no network of its own. Instead `box` starts a small HTTP
+proxy on the host, listening on a unix socket (`/tmp/box/<name>-<pid>.sock`)
+that is bound into the sandbox at `/run/box/proxy.sock`. Inside, `box`
+exposes it on `127.0.0.1:3128` and sets `HTTP_PROXY`, `HTTPS_PROXY` and
+`NO_PROXY` accordingly, then runs the command as its child. The proxy
+handles `CONNECT` (HTTPS) and plain HTTP requests and only lets them through
+to hosts on `allow_hosts`: an entry is an exact name, `*.suffix` for anything
+under a domain, or `*`. Everything else gets `403 Forbidden` and a line in
+`/tmp/box/<name>-<pid>.log`. Names that match only through a wildcard may not
+resolve to loopback or link-local addresses, so a `*` entry does not reach
+services on the host. Programs that ignore the proxy variables have no
+network at all. `box show` prints the proxy command along with the `bwrap`
+command line.
 
 ## Configuration
 
@@ -56,7 +72,9 @@ rw_binds = ["$PWD"]
 tmpfs    = ["$HOME", "/var/tmp"]
 private_tmp = true
 overlays = [{ path = "~/.local/share/mise", persist = true }]
-network  = true
+network  = false
+proxy    = true
+allow_hosts = ["github.com", "*.github.com", "registry.npmjs.org"]
 hostname = "box"
 new_session    = true
 disable_userns = true
@@ -69,13 +87,15 @@ overlays   = [{ path = "?~/.claude", persist = false }]
 rw_binds   = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
 copy_files = ["?~/.claude.json"]
 pass_env   = ["ANTHROPIC_*", "CLAUDE_*"]
+allow_hosts = ["*.anthropic.com", "claude.ai", "*.claude.ai"]
 
 [binaries.trusted-tool]
 private_tmp = false          # share the host's /tmp instead
 rw_binds    = ["/tmp"]
+network     = true           # share the host network, no proxy
 
 [binaries.untrusted-tool]
-network    = false
+proxy      = false           # no network at all
 inherit    = true            # set false to ignore [default] entirely
 ```
 
@@ -92,7 +112,9 @@ with `?` to skip silently.
 | `overlays`        | list              | `"path"` or `{ path, persist }`; `persist = false` discards writes on exit |
 | `copy_files`      | list              | host files copied into the sandbox (`--file`); changes made inside never reach the host |
 | `drop_binds`      | list              | inherited entries to remove (binary sections only)             |
-| `network`         | bool              | share the host network                                         |
+| `network`         | bool              | share the host network; `false` gives an empty namespace       |
+| `proxy`           | bool              | with `network = false`: reach `allow_hosts` through a proxy on the host |
+| `allow_hosts`     | list              | hosts the proxy lets through: `name`, `*.suffix` or `*`        |
 | `hostname`        | string            | hostname inside the sandbox; empty keeps the host's            |
 | `new_session`     | bool              | `--new-session` (blocks TIOCSTI, breaks shell job control)     |
 | `disable_userns`  | bool              | `--disable-userns`: no user namespaces inside, so no nested sandboxes |
@@ -123,7 +145,7 @@ the Linux sandbox as closely as Seatbelt allows:
 | unmounted paths are absent            | unlisted paths are denied; `stat` still works everywhere so path resolution does |
 | `tmpfs`: empty, writable, discarded   | hidden: contents can be neither read nor written              |
 | `overlays`                            | read-only (with a warning)                                    |
-| `copy_files`, `private_tmp`           | not supported (warned and ignored)                            |
+| `copy_files`, `private_tmp`, `proxy`  | not supported (warned and ignored)                            |
 | `network = false`: own empty netns    | no IP traffic at all, loopback included                       |
 | Unix sockets under mounted paths      | Unix sockets under exposed paths                              |
 | PID / IPC namespaces                  | processes may only inspect and signal their own sandbox; Mach services are limited to a short list (name lookup, logging, and with network: DNS and TLS trust) |
@@ -179,7 +201,10 @@ task clean          # remove build artifacts
 ## Notes
 
 - `box` replaces itself with `bwrap` (or `sandbox-exec`) via `exec`, so
-  signals and the terminal behave as if the program ran directly.
+  signals and the terminal behave as if the program ran directly. With the
+  proxy enabled it first forks the proxy process, which is told to die with
+  it (`bwrap` inherits that role); inside the sandbox the command runs as a
+  child of the forwarder, which passes signals and the exit status through.
 - `box` sets bwrap's `argv[0]` to `box:<name>`, which is how `box ps` finds
   its sandboxes; stats cover the whole process tree under that bwrap.
 - Mounts are applied parents-first, so a tmpfs on `$HOME` never hides a bind

@@ -33,6 +33,31 @@ type Options struct {
 	ID string
 	// Lookup resolves the command on the host. Defaults to exec.LookPath.
 	Lookup func(string) (string, error)
+	// Self is the box executable, run as the proxy on the host and as the
+	// forwarder inside the sandbox. Defaults to os.Executable().
+	Self string
+}
+
+// ProxyAddr is where the forwarder listens inside the sandbox, and
+// ProxySocket is where the host proxy's unix socket is bound there.
+const (
+	ProxyAddr   = "127.0.0.1:3128"
+	ProxySocket = "/run/box/proxy.sock"
+)
+
+// Proxy describes the allowlisting proxy a sandbox reaches the network
+// through (see package proxy).
+type Proxy struct {
+	Socket string   // unix socket on the host, bound into the sandbox
+	Log    string   // host file the proxy logs denied requests to
+	Allow  []string // allowed destination hosts
+}
+
+// ProxyFiles returns the socket and log paths for sandbox name/id under
+// root, next to its private /tmp directory.
+func ProxyFiles(root, name, id string) (socket, logFile string) {
+	base := TmpDir(root, name, id)
+	return base + ".sock", base + ".log"
 }
 
 // DefaultTmpRoot is the host directory under which private /tmp directories
@@ -96,6 +121,10 @@ type Plan struct {
 	// Files lists host files held open on descriptors the runner inherits
 	// (copy_files), by descriptor number.
 	Files map[int]string
+	// Proxy, when set, is started on the host before the runner.
+	Proxy *Proxy
+	// Self is the box executable (Options.Self).
+	Self string
 	// Dir, ClearEnv, UnsetEnv and Env set up the runner's own working
 	// directory and environment, for runners that cannot do it themselves.
 	// Env holds KEY=VALUE pairs.
@@ -135,10 +164,35 @@ func (p *Plan) Command() string {
 	return strings.Join(parts, " ")
 }
 
-// Exec creates any required directories and replaces the current process
-// with the runner, tagging argv[0] with ProcTitlePrefix. It only returns on
-// error.
+// ProxyCommand returns the host-side proxy invocation as a shell-quoted
+// string, or "" when the plan has no proxy.
+func (p *Plan) ProxyCommand() string {
+	if p.Proxy == nil {
+		return ""
+	}
+	parts := []string{shellQuote(p.Self)}
+	for _, a := range p.proxyArgs() {
+		parts = append(parts, shellQuote(a))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (p *Plan) proxyArgs() []string {
+	args := []string{"_proxy", "-s", p.Proxy.Socket, "-l", p.Proxy.Log}
+	for _, h := range p.Proxy.Allow {
+		args = append(args, "-a", h)
+	}
+	return args
+}
+
+// Exec creates any required directories, starts the proxy if there is one
+// and replaces the current process with the runner, tagging argv[0] with
+// ProcTitlePrefix. It only returns on error.
 func (p *Plan) Exec() error {
+	// The proxy child gets a parent-death signal, which Linux ties to the
+	// thread that forked it; keep this goroutine on one thread so the same
+	// thread goes on to exec the runner and lives as long as the sandbox.
+	runtime.LockOSThread()
 	for _, d := range p.Dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
@@ -154,32 +208,82 @@ func (p *Plan) Exec() error {
 			return err
 		}
 	}
+	proxy, err := p.startProxy()
+	if err != nil {
+		return err
+	}
 	argv := append([]string{ProcTitlePrefix + p.Name}, p.Args...)
-	return syscall.Exec(p.Exe, argv, p.environ())
+	err = syscall.Exec(p.Exe, argv, p.environ())
+	if proxy != nil {
+		_ = proxy.Kill()
+	}
+	return err
 }
 
-// makeTmpDir creates the private /tmp directory. Its parent is shared by all
-// users like /tmp itself, so it is created world-writable with the sticky
-// bit and must be a real directory that is either ours or sticky. A
-// directory left behind by an earlier process with the same PID is cleared.
-func makeTmpDir(dir string) error {
-	parent := filepath.Dir(dir)
-	if err := os.Mkdir(parent, 0o777); err == nil {
-		if err := os.Chmod(parent, 0o777|os.ModeSticky); err != nil {
+// startProxy runs `box _proxy` for p.Proxy and waits until it listens. The
+// child is told to die with this process (which becomes the runner).
+func (p *Plan) startProxy() (*os.Process, error) {
+	if p.Proxy == nil {
+		return nil, nil
+	}
+	if err := makeTmpRoot(filepath.Dir(p.Proxy.Socket)); err != nil {
+		return nil, err
+	}
+	if err := os.Remove(p.Proxy.Socket); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = r.Close() }()
+	cmd := exec.Command(p.Self, p.proxyArgs()...)
+	cmd.ExtraFiles = []*os.File{w} // proxy.ReadyFD
+	cmd.SysProcAttr = dieWithParent()
+	if err := cmd.Start(); err != nil {
+		_ = w.Close()
+		return nil, fmt.Errorf("starting proxy: %w", err)
+	}
+	_ = w.Close()
+	if n, _ := r.Read(make([]byte, 1)); n == 0 {
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("proxy failed to start; see %s", p.Proxy.Log)
+	}
+	// Leave the child unwaited: this process is about to exec.
+	go func() { _ = cmd.Wait() }()
+	return cmd.Process, nil
+}
+
+// makeTmpRoot creates the directory holding private /tmp directories and
+// proxy sockets. It is shared by all users like /tmp itself, so it is
+// created world-writable with the sticky bit and must be a real directory
+// that is either ours or sticky.
+func makeTmpRoot(root string) error {
+	if err := os.Mkdir(root, 0o777); err == nil {
+		if err := os.Chmod(root, 0o777|os.ModeSticky); err != nil {
 			return err
 		}
 	} else if !os.IsExist(err) {
 		return err
 	}
-	fi, err := os.Lstat(parent)
+	fi, err := os.Lstat(root)
 	if err != nil {
 		return err
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("%s is not a directory", parent)
+		return fmt.Errorf("%s is not a directory", root)
 	}
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() && fi.Mode()&os.ModeSticky == 0 {
-		return fmt.Errorf("%s is owned by another user and not sticky", parent)
+		return fmt.Errorf("%s is owned by another user and not sticky", root)
+	}
+	return nil
+}
+
+// makeTmpDir creates the private /tmp directory fresh, clearing anything
+// left behind by an earlier process with the same PID.
+func makeTmpDir(dir string) error {
+	if err := makeTmpRoot(filepath.Dir(dir)); err != nil {
+		return err
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return err
@@ -292,6 +396,17 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			add(m)
 		}
 	}
+	if prof.Proxy && !prof.Network {
+		if resolveLinks {
+			plan.Warnings = append(plan.Warnings, "proxy is not supported on this platform; ignored (no network)")
+		} else {
+			sock, logFile := ProxyFiles(opts.TmpRoot, plan.Name, opts.ID)
+			plan.Proxy = &Proxy{Socket: sock, Log: logFile, Allow: prof.AllowHosts}
+			plan.Self = opts.Self
+			// The socket is created by Exec, so it cannot be checked here.
+			add(&mount{kind: kindRW, src: sock, dest: ProxySocket, visible: true})
+		}
+	}
 	for _, o := range prof.Overlays {
 		src, optional := exp(o.Path)
 		if src == "" {
@@ -335,9 +450,16 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 	if !filepath.IsAbs(resolved) {
 		resolved = filepath.Join(opts.Cwd, resolved)
 	}
+	var expose []string
 	if prof.BindBinary {
-		candidates := []string{resolved}
-		if real, err := filepath.EvalSymlinks(resolved); err == nil && real != resolved {
+		expose = append(expose, resolved)
+	}
+	if plan.Proxy != nil {
+		expose = append(expose, opts.Self) // runs the forwarder inside
+	}
+	for _, e := range expose {
+		candidates := []string{e}
+		if real, err := filepath.EvalSymlinks(e); err == nil && real != e {
 			candidates = append(candidates, real)
 		}
 		for _, c := range candidates {
@@ -379,6 +501,11 @@ func fillDefaults(o *Options) error {
 	}
 	if o.ID == "" {
 		o.ID = strconv.Itoa(os.Getpid())
+	}
+	if o.Self == "" {
+		if o.Self, err = os.Executable(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -513,22 +640,24 @@ func realPath(p string) string {
 	return p
 }
 
-// covered reports whether path is exposed by an existing bind or overlay and
-// not hidden by a deeper tmpfs. A visible mount also covers paths under the
-// real location of its source, so a binary resolved through a symlinked
-// parent (/var -> /private/var) is not bound a second time.
+// covered reports whether the host path is visible at the same path inside
+// the sandbox: exposed by a bind or overlay of the place it lives in, and
+// not hidden by a deeper tmpfs or by a bind of other content (the private
+// /tmp). A visible mount also covers paths under the real location of its
+// source, so a binary resolved through a symlinked parent
+// (/var -> /private/var) is not bound a second time.
 func covered(mounts []*mount, path string) bool {
 	best := -1
 	visible := false
 	for _, m := range mounts {
-		if !under(path, m.dest) {
-			if !m.visible || m.src == "" || !under(path, realPath(m.src)) {
-				continue
-			}
+		byDest := under(path, m.dest)
+		bySrc := m.visible && m.src != "" && under(path, realPath(m.src))
+		if !byDest && !bySrc {
+			continue
 		}
-		d := depth(m.dest)
-		if d > best {
-			best, visible = d, m.visible
+		if d := depth(m.dest); d > best {
+			best = d
+			visible = m.visible && (bySrc || m.src == m.dest)
 		}
 	}
 	return visible

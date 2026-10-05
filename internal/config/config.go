@@ -90,6 +90,8 @@ type Section struct {
 	DropBinds     []string          `toml:"drop_binds"`
 	PrivateTmp    *bool             `toml:"private_tmp"`
 	Network       *bool             `toml:"network"`
+	Proxy         *bool             `toml:"proxy"`
+	AllowHosts    []string          `toml:"allow_hosts"`
 	Hostname      *string           `toml:"hostname"`
 	NewSession    *bool             `toml:"new_session"`
 	DisableUserns *bool             `toml:"disable_userns"`
@@ -120,6 +122,8 @@ type Profile struct {
 	CopyFiles     []string          `toml:"copy_files"`
 	PrivateTmp    bool              `toml:"private_tmp"`
 	Network       bool              `toml:"network"`
+	Proxy         bool              `toml:"proxy"`
+	AllowHosts    []string          `toml:"allow_hosts"`
 	Hostname      string            `toml:"hostname"`
 	NewSession    bool              `toml:"new_session"`
 	DisableUserns bool              `toml:"disable_userns"`
@@ -227,6 +231,8 @@ func (c *Config) Resolve(name string) Profile {
 		CopyFiles:     mergeList(base.CopyFiles, sec.CopyFiles, sec.DropBinds),
 		PrivateTmp:    pick(base.PrivateTmp, sec.PrivateTmp, false),
 		Network:       pick(base.Network, sec.Network, true),
+		Proxy:         pick(base.Proxy, sec.Proxy, false),
+		AllowHosts:    mergeList(base.AllowHosts, sec.AllowHosts, nil),
 		Hostname:      pick(base.Hostname, sec.Hostname, ""),
 		NewSession:    pick(base.NewSession, sec.NewSession, false),
 		DisableUserns: pick(base.DisableUserns, sec.DisableUserns, false),
