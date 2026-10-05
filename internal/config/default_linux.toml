@@ -56,10 +56,11 @@ copy_files = []
 network = false
 proxy = true
 allow_hosts = [
-  "github.com", "*.github.com", "*.githubusercontent.com",
-  "registry.npmjs.org", "proxy.golang.org", "sum.golang.org",
-  "pypi.org", "files.pythonhosted.org", "crates.io", "*.crates.io",
-  "storage.googleapis.com", "gitlab.com", "go.dev", "dl.google.com"
+  "crates.io", "*.crates.io", "dl.google.com", "files.pythonhosted.org",
+  "github.com", "*.github.com", "*.githubusercontent.com", "gitlab.com",
+  "go.dev", "proxy.golang.org", "pypi.org",
+  "registry.npmjs.org", "rubygems.org",
+  "sum.golang.org", "storage.googleapis.com",
 ]
 
 # Hostname inside the sandbox (empty keeps the host name).
