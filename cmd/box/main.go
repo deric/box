@@ -255,23 +255,16 @@ func cleanTmp(filter string) (int, error) {
 	n := 0
 	for _, e := range entries {
 		name := e.Name()
+		ext := ""
 		if !e.IsDir() {
-			ext := filepath.Ext(name)
+			ext = filepath.Ext(name)
 			if ext != ".sock" && ext != ".log" {
 				continue
 			}
 			name = strings.TrimSuffix(name, ext)
-			if ext == ".log" {
-				// Drop the working directory, which starts with the
-				// dash that replaced its leading slash.
-				name, _, _ = strings.Cut(name, "--")
-			}
 		}
-		i := strings.LastIndex(name, "-")
-		if i <= 0 || (filter != "" && name[:i] != filter) {
-			continue
-		}
-		if pid, err := strconv.Atoi(name[i+1:]); err != nil || procs.IsRunning(pid, name[:i]) {
+		bin, pid, ok := splitEntry(name, ext == ".log")
+		if !ok || (filter != "" && bin != filter) || procs.IsRunning(pid, bin) {
 			continue
 		}
 		path := filepath.Join(sandbox.DefaultTmpRoot, e.Name())
@@ -283,6 +276,37 @@ func cleanTmp(filter string) (int, error) {
 		n++
 	}
 	return n, nil
+}
+
+// splitEntry parses a /tmp/box entry name into the binary and PID. Private
+// /tmp directories and sockets are <name>-<pid>; proxy logs additionally end
+// in -<dir>, the working directory with slashes turned into dashes, so there
+// the PID is the first all-digit component that follows a non-empty name.
+func splitEntry(name string, log bool) (bin string, pid int, ok bool) {
+	if !log {
+		i := strings.LastIndex(name, "-")
+		if i <= 0 {
+			return "", 0, false
+		}
+		pid, err := strconv.Atoi(name[i+1:])
+		if err != nil {
+			return "", 0, false
+		}
+		return name[:i], pid, true
+	}
+	for i := 1; i < len(name); i++ {
+		if name[i] != '-' {
+			continue
+		}
+		digits := name[i+1:]
+		if j := strings.IndexByte(digits, '-'); j >= 0 {
+			digits = digits[:j]
+		}
+		if pid, err := strconv.Atoi(digits); err == nil {
+			return name[:i], pid, true
+		}
+	}
+	return "", 0, false
 }
 
 func cmdPs(argv []string) error {

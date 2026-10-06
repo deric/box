@@ -313,7 +313,7 @@ func TestBuildProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	sock := filepath.Join(root, "tool-7.sock")
-	logFile := filepath.Join(root, "tool-7-"+strings.ReplaceAll(cwd, "/", "-")+".log")
+	logFile := filepath.Join(root, "tool-7-"+strings.ReplaceAll(strings.TrimPrefix(cwd, "/"), "/", "-")+".log")
 	if plan.Proxy == nil || plan.Proxy.Socket != sock || plan.Proxy.Log != logFile ||
 		len(plan.Proxy.Allow) != 2 {
 		t.Fatalf("Proxy = %+v", plan.Proxy)

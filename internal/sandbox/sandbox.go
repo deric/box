@@ -55,12 +55,13 @@ type Proxy struct {
 
 // ProxyFiles returns the socket and log paths for sandbox name/id under
 // root, next to its private /tmp directory. The log name also carries the
-// sandbox's working directory with every slash replaced by a dash, so logs
-// of the same binary started from different places can be told apart:
-// <root>/<name>-<id>--home-user-project.log.
+// sandbox's working directory, without its leading slash and with every
+// other slash replaced by a dash, so logs of the same binary started from
+// different places can be told apart: <root>/<name>-<id>-home-user-project.log.
 func ProxyFiles(root, name, id, cwd string) (socket, logFile string) {
 	base := TmpDir(root, name, id)
-	dir := strings.ReplaceAll(filepath.Clean(cwd), string(filepath.Separator), "-")
+	sep := string(filepath.Separator)
+	dir := strings.ReplaceAll(strings.TrimPrefix(filepath.Clean(cwd), sep), sep, "-")
 	return base + ".sock", base + "-" + dir + ".log"
 }
 

@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The proxy log is named `/tmp/box/<name>-<pid>-<dir>.log`, with `<dir>` the
-  working directory and slashes replaced by dashes, so logs of one binary
-  started from different directories can be told apart.
+  working directory minus its leading slash and the other slashes replaced by
+  dashes, so logs of one binary started from different directories can be
+  told apart.
 
 ## [0.1.1] - 2026-10-06
 
