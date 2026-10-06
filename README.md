@@ -195,8 +195,31 @@ task check          # lint, test, build
 task smoke          # run a probe inside a real sandbox
 task run -- show sh # build, then run box with the given arguments
 task install        # copy the binary to ~/.local/bin (override with INSTALL_DIR=...)
+task package        # build tar.gz, deb and rpm packages into ./dist (needs dagger)
+task package:check  # install the deb and rpm into fresh containers and run box version
 task clean          # remove build artifacts
 ```
+
+### Packaging
+
+Release artifacts are built with [Dagger](https://dagger.io) (pinned in
+`mise.toml`, needs a container runtime) from the module in `.dagger/`:
+
+```sh
+dagger call package --version=v1.2.3 export --path=dist
+dagger call check --version=v1.2.3        # install the deb/rpm in Debian/Fedora containers
+dagger call deb --arch=arm64 export --path=box.deb
+dagger call tarball --os=darwin --arch=arm64 export --path=box.tar.gz
+```
+
+`package` produces `box_<version>_{linux,darwin}_{amd64,arm64}.tar.gz`
+(binary, `README.md`, `LICENSE`), `box_<version>_linux_{amd64,arm64}.deb`
+and `.rpm` (installs `/usr/bin/box`, depends on `bubblewrap`) and a
+`SHA256SUMS` file. Package metadata lives in `nfpm.yaml`. The version is
+baked into `box version`; for the deb/rpm it is normalised to something
+their version rules accept (`v1.2.3-4-gabc-dirty` becomes `1.2.3~4.gabc.dirty`,
+an untagged commit becomes a prerelease of `0.0.0`). Pushing a `v*` tag runs
+the same build in CI and attaches the artifacts to a GitHub release.
 
 ## Notes
 
