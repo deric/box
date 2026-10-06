@@ -23,7 +23,7 @@ tasks:
     generates:
       - "{{.BIN}}"
     cmds:
-      - go build -ldflags "{{.LDFLAGS}}" -o {{.BIN}} .
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.BIN}} ./cmd/box
 
   run:
     desc: Build and run box with the given arguments (task run -- show sh)
