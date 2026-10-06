@@ -83,24 +83,40 @@ func cmdProxy(argv []string) error {
 	return srv.Serve(ln)
 }
 
-// cmdForward runs inside the sandbox: it listens on loopback, relays to the
-// proxy socket and runs the command as its child, passing its exit status
-// through.
+// cmdForward runs inside the sandbox as the parent of the command, passing
+// its exit status through. With -s it listens on loopback and relays to the
+// proxy socket; each -w path=mount names a sync_files copy that is written
+// back over its host original (bound at mount) once the command exits.
 func cmdForward(argv []string) error {
 	fs := flag.NewFlagSet("_forward", flag.ExitOnError)
-	sock := fs.String("s", sandbox.ProxySocket, "proxy unix socket")
+	sock := fs.String("s", "", "proxy unix socket (no proxy when empty)")
 	addr := fs.String("l", sandbox.ProxyAddr, "address to listen on")
+	var syncArgs stringList
+	fs.Var(&syncArgs, "w", "sync file as path=mount (repeatable)")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 	if fs.NArg() == 0 {
 		return fmt.Errorf("_forward: missing command")
 	}
-	ln, err := net.Listen("tcp", *addr)
-	if err != nil {
-		return fmt.Errorf("proxy forwarder: %w", err)
+	var files []sandbox.SyncFile
+	for _, a := range syncArgs {
+		sf, err := sandbox.ParseSyncFile(a)
+		if err != nil {
+			return fmt.Errorf("_forward: %w", err)
+		}
+		files = append(files, sf)
 	}
-	go func() { _ = proxy.Forward(ln, *sock) }()
+	syncer := sandbox.NewSyncer(files)
+
+	var ln net.Listener
+	if *sock != "" {
+		var err error
+		if ln, err = net.Listen("tcp", *addr); err != nil {
+			return fmt.Errorf("proxy forwarder: %w", err)
+		}
+		go func() { _ = proxy.Forward(ln, *sock) }()
+	}
 
 	cmd := exec.Command(fs.Arg(0), fs.Args()[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -117,8 +133,17 @@ func cmdForward(argv []string) error {
 			_ = cmd.Process.Signal(s)
 		}
 	}()
-	err = cmd.Wait()
-	_ = ln.Close()
+	err := cmd.Wait()
+	if ln != nil {
+		_ = ln.Close()
+	}
+	warnings, serr := syncer.WriteBack()
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, "box: warning:", w)
+	}
+	if serr != nil {
+		fmt.Fprintln(os.Stderr, "box:", serr)
+	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {

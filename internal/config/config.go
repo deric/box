@@ -87,6 +87,7 @@ type Section struct {
 	Tmpfs         []string          `toml:"tmpfs"`
 	Overlays      []Overlay         `toml:"overlays"`
 	CopyFiles     []string          `toml:"copy_files"`
+	SyncFiles     []string          `toml:"sync_files"`
 	DropBinds     []string          `toml:"drop_binds"`
 	PrivateTmp    *bool             `toml:"private_tmp"`
 	Network       *bool             `toml:"network"`
@@ -120,6 +121,7 @@ type Profile struct {
 	Tmpfs         []string          `toml:"tmpfs"`
 	Overlays      []Overlay         `toml:"overlays"`
 	CopyFiles     []string          `toml:"copy_files"`
+	SyncFiles     []string          `toml:"sync_files"`
 	PrivateTmp    bool              `toml:"private_tmp"`
 	Network       bool              `toml:"network"`
 	Proxy         bool              `toml:"proxy"`
@@ -229,6 +231,7 @@ func (c *Config) Resolve(name string) Profile {
 		Tmpfs:         mergeList(base.Tmpfs, sec.Tmpfs, sec.DropBinds),
 		Overlays:      mergeOverlays(base.Overlays, sec.Overlays, sec.DropBinds),
 		CopyFiles:     mergeList(base.CopyFiles, sec.CopyFiles, sec.DropBinds),
+		SyncFiles:     mergeList(base.SyncFiles, sec.SyncFiles, sec.DropBinds),
 		PrivateTmp:    pick(base.PrivateTmp, sec.PrivateTmp, false),
 		Network:       pick(base.Network, sec.Network, true),
 		Proxy:         pick(base.Proxy, sec.Proxy, false),

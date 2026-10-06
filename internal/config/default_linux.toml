@@ -45,6 +45,11 @@ overlays = [
 # the same path, but changes it makes stay inside and vanish on exit.
 copy_files = []
 
+# Like copy_files, but the copy is written back over the host file when the
+# program exits. For files their owner replaces by renaming a temporary file
+# over them, which a bind mount of the file alone would refuse.
+sync_files = []
+
 # Network. With network = false the sandbox gets its own, empty network
 # namespace (loopback only). proxy = true then starts an HTTP proxy on the
 # host that the sandbox reaches through a unix socket bound into it, and only
@@ -105,15 +110,17 @@ bind_binary = true
 extra_args = []
 
 # Claude Code keeps its settings, credentials, sessions and memory in
-# ~/.claude and its global state in ~/.claude.json. Only the sessions and
-# memory under ~/.claude/projects and the login credentials (whose tokens are
-# refreshed in place) are shared with the host; the rest of ~/.claude is
-# visible but writes to it are discarded on exit, and ~/.claude.json is a
-# private copy.
+# ~/.claude and its global state (folder trust, MCP servers, OAuth account)
+# in ~/.claude.json. Only the sessions and memory under ~/.claude/projects
+# and the login credentials (whose tokens are refreshed in place) are shared
+# with the host; the rest of ~/.claude is visible but writes to it are
+# discarded on exit. ~/.claude.json is saved by writing a temporary file and
+# renaming it over the original, which a bind mount of the file alone would
+# refuse, so it is a copy that is written back to the host when claude exits.
 [binaries.claude]
 overlays = [{ path = "?~/.claude", persist = false }]
 rw_binds = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
-copy_files = ["?~/.claude.json"]
+sync_files = ["?~/.claude.json"]
 pass_env = ["ANTHROPIC_*", "CLAUDE_*"]
 allow_hosts = [
   "*.anthropic.com", "claude.ai", "*.claude.ai", "*.claude.com", "*.sentry.io",

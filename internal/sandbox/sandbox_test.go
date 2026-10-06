@@ -405,3 +405,144 @@ func TestBuildSkipsBinaryBindUnderSymlinkedParent(t *testing.T) {
 		t.Errorf("binary should not be bound separately when its directory is mounted; got %d ro-binds", n)
 	}
 }
+
+func TestBuildSyncFiles(t *testing.T) {
+	home, cwd, _, bin := fixture(t)
+	self := filepath.Join(filepath.Dir(bin), "box")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(home, ".claude.json")
+	if err := os.WriteFile(file, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prof := config.Profile{
+		Tmpfs:     []string{"$HOME"},
+		SyncFiles: []string{"~/.claude.json", "?~/missing"},
+	}
+	plan, err := buildBwrap(prof, Options{
+		Binary: "tool", Args: []string{"--flag"}, Cwd: cwd, Home: home, Self: self,
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Files) != 1 || len(plan.Sync) != 1 {
+		t.Fatalf("Files = %v, Sync = %v, want one each", plan.Files, plan.Sync)
+	}
+	var fd int
+	for k := range plan.Files {
+		fd = k
+	}
+	defer func() { _ = syscall.Close(fd) }()
+	mountPoint := SyncDir + "/0"
+	if plan.Sync[0] != (SyncFile{Path: file, Mount: mountPoint}) {
+		t.Errorf("Sync[0] = %+v", plan.Sync[0])
+	}
+	cmd := " " + strings.Join(plan.Args, " ") + " "
+	for _, want := range []string{
+		" --perms 0600 --file " + strconv.Itoa(fd) + " " + file + " ",
+		" --bind " + file + " " + mountPoint + " ",
+		" --ro-bind " + self + " " + self + " ",
+		" -- " + self + " _forward -w " + file + "=" + mountPoint + " -- tool --flag ",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("missing %q in\n%s", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, " -s ") || plan.Proxy != nil {
+		t.Errorf("no proxy was requested: %s", cmd)
+	}
+	if len(plan.Warnings) != 0 {
+		t.Errorf("unexpected warnings %v", plan.Warnings)
+	}
+}
+
+func TestSyncerWriteBack(t *testing.T) {
+	dir := t.TempDir()
+	host := filepath.Join(dir, "host.json")
+	copy := filepath.Join(dir, "copy.json")
+	for _, p := range []string{host, copy} {
+		if err := os.WriteFile(p, []byte(`{"a":1}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hostInode := func() uint64 {
+		fi, err := os.Stat(host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fi.Sys().(*syscall.Stat_t).Ino
+	}
+	before := hostInode()
+	s := NewSyncer([]SyncFile{{Path: copy, Mount: host}})
+
+	// Identical content: nothing to do, the host file is not touched.
+	if warnings, err := s.WriteBack(); err != nil || len(warnings) != 0 {
+		t.Fatalf("WriteBack() = %v, %v", warnings, err)
+	}
+
+	// The program replaced its copy (new inode); the host gets the content
+	// in place.
+	tmp := copy + ".tmp"
+	if err := os.WriteFile(tmp, []byte(`{"a":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, copy); err != nil {
+		t.Fatal(err)
+	}
+	warnings, err := s.WriteBack()
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("WriteBack() = %v, %v", warnings, err)
+	}
+	if got, _ := os.ReadFile(host); string(got) != `{"a":2}` {
+		t.Errorf("host = %s, want the copy's content", got)
+	}
+	if hostInode() != before {
+		t.Error("host file must be rewritten in place")
+	}
+	if fi, _ := os.Stat(host); fi.Mode().Perm() != 0o600 {
+		t.Errorf("host mode = %v, want 0600", fi.Mode().Perm())
+	}
+
+	// A host file edited meanwhile is overwritten with a warning.
+	if err := os.WriteFile(host, []byte(`{"other":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(copy, []byte(`{"a":3}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	warnings, err = s.WriteBack()
+	if err != nil || len(warnings) != 1 || !strings.Contains(warnings[0], "changed on the host") {
+		t.Fatalf("WriteBack() = %v, %v, want one warning", warnings, err)
+	}
+	if got, _ := os.ReadFile(host); string(got) != `{"a":3}` {
+		t.Errorf("host = %s, want the copy's content", got)
+	}
+
+	// A copy removed inside leaves the host alone.
+	if err := os.Remove(copy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WriteBack(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(host); string(got) != `{"a":3}` {
+		t.Errorf("host = %s after copy removal", got)
+	}
+}
+
+func TestParseSyncFile(t *testing.T) {
+	sf, err := ParseSyncFile("/home/u/.claude.json=/run/box/sync/0")
+	if err != nil || sf.Path != "/home/u/.claude.json" || sf.Mount != "/run/box/sync/0" {
+		t.Errorf("ParseSyncFile = %+v, %v", sf, err)
+	}
+	if sf.Arg() != "/home/u/.claude.json=/run/box/sync/0" {
+		t.Errorf("Arg() = %q", sf.Arg())
+	}
+	for _, bad := range []string{"", "nope", "=/x", "/x="} {
+		if _, err := ParseSyncFile(bad); err == nil {
+			t.Errorf("ParseSyncFile(%q) should fail", bad)
+		}
+	}
+}
