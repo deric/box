@@ -34,9 +34,9 @@ Usage:
   box show [-c FILE] <command> [args...]             print the sandbox command line
   box config [-c FILE] [<command>]                   print the effective profile
   box init [-c FILE]                                 write the default config file
-  box clean [<command>]                              delete overlay layers and stale /tmp dirs
+  box clean [-c FILE] [<command>]                    delete overlay layers, stale /tmp dirs and logs
   box ps [<command>]                                 list running sandboxes
-  box info [-c FILE]                                 print version, isolation mechanism, config path
+  box info [-c FILE]                                 print version, isolation mechanism, config path, log dir
   box version
 
 Flags:
@@ -210,9 +210,18 @@ func cmdInit(argv []string) error {
 }
 
 func cmdClean(argv []string) error {
+	var c common
+	fs := newFlagSet("clean", &c)
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
 	var filter string
-	if len(argv) > 0 {
-		filter = filepath.Base(argv[0])
+	if fs.NArg() > 0 {
+		filter = filepath.Base(fs.Arg(0))
+	}
+	cfg, err := c.load()
+	if err != nil {
+		return err
 	}
 	stateDir, err := config.StateDir()
 	if err != nil {
@@ -230,7 +239,11 @@ func cmdClean(argv []string) error {
 		fmt.Println("removed", dir)
 		removed++
 	}
-	n, err := cleanTmp(filter)
+	dirs, err := logDirs(cfg)
+	if err != nil {
+		return err
+	}
+	n, err := cleanTmp(filter, dirs)
 	if err != nil {
 		return err
 	}
@@ -240,12 +253,56 @@ func cmdClean(argv []string) error {
 	return nil
 }
 
+// logDirs returns the proxy log directories cfg uses, the default section's
+// first, then those of binary sections that differ from it.
+func logDirs(cfg *config.Config) ([]string, error) {
+	names := make([]string, 0, len(cfg.Binaries))
+	for name := range cfg.Binaries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var dirs []string
+	seen := map[string]bool{}
+	for _, name := range append([]string{""}, names...) {
+		dir, err := sandbox.LogDir(cfg.Resolve(name), sandbox.Options{})
+		if err != nil {
+			return nil, err
+		}
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs, nil
+}
+
 // cleanTmp removes private /tmp directories (see sandbox.TmpDir) and proxy
 // sockets and logs (sandbox.ProxyFiles) whose sandbox is no longer running,
-// optionally only those of binary filter. It returns the number of entries
-// removed.
-func cleanTmp(filter string) (int, error) {
-	entries, err := os.ReadDir(sandbox.DefaultTmpRoot)
+// optionally only those of binary filter. Logs are looked for in logDirs as
+// well as in the tmp root. It returns the number of entries removed.
+func cleanTmp(filter string, logDirs []string) (int, error) {
+	n, err := cleanDir(sandbox.DefaultTmpRoot, filter, true)
+	if err != nil {
+		return 0, err
+	}
+	for _, dir := range logDirs {
+		if dir == sandbox.DefaultTmpRoot {
+			continue
+		}
+		m, err := cleanDir(dir, filter, false)
+		if err != nil {
+			return n, err
+		}
+		n += m
+	}
+	return n, nil
+}
+
+// cleanDir removes stale entries from one directory; with tmp it is the tmp
+// root holding private /tmp directories and sockets, otherwise only logs are
+// considered.
+func cleanDir(dir, filter string, tmp bool) (int, error) {
+	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return 0, nil
 	}
@@ -255,21 +312,21 @@ func cleanTmp(filter string) (int, error) {
 	n := 0
 	for _, e := range entries {
 		name := e.Name()
+		ext := ""
 		if !e.IsDir() {
-			ext := filepath.Ext(name)
-			if ext != ".sock" && ext != ".log" {
+			ext = filepath.Ext(name)
+			if ext != ".log" && (!tmp || ext != ".sock") {
 				continue
 			}
 			name = strings.TrimSuffix(name, ext)
-		}
-		i := strings.LastIndex(name, "-")
-		if i <= 0 || (filter != "" && name[:i] != filter) {
+		} else if !tmp {
 			continue
 		}
-		if pid, err := strconv.Atoi(name[i+1:]); err != nil || procs.IsRunning(pid, name[:i]) {
+		bin, pid, ok := splitEntry(name, ext == ".log")
+		if !ok || (filter != "" && bin != filter) || procs.IsRunning(pid, bin) {
 			continue
 		}
-		path := filepath.Join(sandbox.DefaultTmpRoot, e.Name())
+		path := filepath.Join(dir, e.Name())
 		if err := os.RemoveAll(path); err != nil {
 			fmt.Fprintln(os.Stderr, "box: warning:", err)
 			continue
@@ -278,6 +335,37 @@ func cleanTmp(filter string) (int, error) {
 		n++
 	}
 	return n, nil
+}
+
+// splitEntry parses a /tmp/box entry name into the binary and PID. Private
+// /tmp directories and sockets are <name>-<pid>; proxy logs additionally end
+// in -<dir>, the working directory with slashes turned into dashes, so there
+// the PID is the first all-digit component that follows a non-empty name.
+func splitEntry(name string, log bool) (bin string, pid int, ok bool) {
+	if !log {
+		i := strings.LastIndex(name, "-")
+		if i <= 0 {
+			return "", 0, false
+		}
+		pid, err := strconv.Atoi(name[i+1:])
+		if err != nil {
+			return "", 0, false
+		}
+		return name[:i], pid, true
+	}
+	for i := 1; i < len(name); i++ {
+		if name[i] != '-' {
+			continue
+		}
+		digits := name[i+1:]
+		if j := strings.IndexByte(digits, '-'); j >= 0 {
+			digits = digits[:j]
+		}
+		if pid, err := strconv.Atoi(digits); err == nil {
+			return name[:i], pid, true
+		}
+	}
+	return "", 0, false
 }
 
 func cmdPs(argv []string) error {
@@ -308,8 +396,8 @@ func cmdPs(argv []string) error {
 }
 
 // cmdInfo prints what box would use on this host: its version, the
-// isolation mechanism, the configuration and state locations and how many
-// sandboxes are running.
+// isolation mechanism, the configuration, state and log locations and how
+// many sandboxes are running.
 func cmdInfo(argv []string) error {
 	var c common
 	fs := newFlagSet("info", &c)
@@ -331,6 +419,14 @@ func cmdInfo(argv []string) error {
 		configNote = " (" + err.Error() + ")"
 	}
 	stateDir, err := config.StateDir()
+	if err != nil {
+		return err
+	}
+	cfg, err := c.load()
+	if err != nil {
+		return err
+	}
+	logDir, err := describeLogDirs(cfg)
 	if err != nil {
 		return err
 	}
@@ -357,6 +453,7 @@ func cmdInfo(argv []string) error {
 		{"config", configPath + configNote},
 		{"state dir", stateDir},
 		{"tmp root", sandbox.DefaultTmpRoot},
+		{"log dir", logDir},
 		{"running", running},
 	}
 	for _, row := range rows {
@@ -365,6 +462,34 @@ func cmdInfo(argv []string) error {
 		}
 	}
 	return w.Flush()
+}
+
+// describeLogDirs renders the default log directory followed by the binaries
+// that use a different one, e.g. "/tmp/box (claude: /home/u/logs)".
+func describeLogDirs(cfg *config.Config) (string, error) {
+	def, err := sandbox.LogDir(cfg.Resolve(""), sandbox.Options{})
+	if err != nil {
+		return "", err
+	}
+	names := make([]string, 0, len(cfg.Binaries))
+	for name := range cfg.Binaries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var extra []string
+	for _, name := range names {
+		dir, err := sandbox.LogDir(cfg.Resolve(name), sandbox.Options{})
+		if err != nil {
+			return "", err
+		}
+		if dir != def {
+			extra = append(extra, name+": "+dir)
+		}
+	}
+	if len(extra) > 0 {
+		def += " (" + strings.Join(extra, ", ") + ")"
+	}
+	return def, nil
 }
 
 // countSandboxes describes the running sandboxes as a total followed by a

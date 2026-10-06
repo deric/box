@@ -93,6 +93,7 @@ type Section struct {
 	Network       *bool             `toml:"network"`
 	Proxy         *bool             `toml:"proxy"`
 	AllowHosts    []string          `toml:"allow_hosts"`
+	LogDir        *string           `toml:"log_dir"`
 	Hostname      *string           `toml:"hostname"`
 	NewSession    *bool             `toml:"new_session"`
 	DisableUserns *bool             `toml:"disable_userns"`
@@ -113,6 +114,10 @@ type Config struct {
 	Binaries map[string]Section `toml:"binaries"`
 }
 
+// DefaultLogDir is where the proxy writes its logs unless log_dir says
+// otherwise; it is also where private /tmp directories and sockets live.
+const DefaultLogDir = "/tmp/box"
+
 // Profile is the fully resolved configuration for one binary.
 type Profile struct {
 	ROBinds       []string          `toml:"ro_binds"`
@@ -126,6 +131,7 @@ type Profile struct {
 	Network       bool              `toml:"network"`
 	Proxy         bool              `toml:"proxy"`
 	AllowHosts    []string          `toml:"allow_hosts"`
+	LogDir        string            `toml:"log_dir"`
 	Hostname      string            `toml:"hostname"`
 	NewSession    bool              `toml:"new_session"`
 	DisableUserns bool              `toml:"disable_userns"`
@@ -236,6 +242,7 @@ func (c *Config) Resolve(name string) Profile {
 		Network:       pick(base.Network, sec.Network, true),
 		Proxy:         pick(base.Proxy, sec.Proxy, false),
 		AllowHosts:    mergeList(base.AllowHosts, sec.AllowHosts, nil),
+		LogDir:        pick(base.LogDir, sec.LogDir, DefaultLogDir),
 		Hostname:      pick(base.Hostname, sec.Hostname, ""),
 		NewSession:    pick(base.NewSession, sec.NewSession, false),
 		DisableUserns: pick(base.DisableUserns, sec.DisableUserns, false),

@@ -313,7 +313,8 @@ func TestBuildProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	sock := filepath.Join(root, "tool-7.sock")
-	if plan.Proxy == nil || plan.Proxy.Socket != sock || plan.Proxy.Log != filepath.Join(root, "tool-7.log") ||
+	logFile := filepath.Join(root, "tool-7-"+strings.ReplaceAll(strings.TrimPrefix(cwd, "/"), "/", "-")+".log")
+	if plan.Proxy == nil || plan.Proxy.Socket != sock || plan.Proxy.Log != logFile ||
 		len(plan.Proxy.Allow) != 2 {
 		t.Fatalf("Proxy = %+v", plan.Proxy)
 	}
@@ -332,10 +333,21 @@ func TestBuildProxy(t *testing.T) {
 	if strings.Contains(cmd, "--share-net") {
 		t.Error("network must not be shared when going through the proxy")
 	}
-	want := self + " _proxy -s " + sock + " -l " + filepath.Join(root, "tool-7.log") + " -a api.anthropic.com -a '*.github.com'"
+	want := self + " _proxy -s " + sock + " -l " + logFile + " -a api.anthropic.com -a '*.github.com'"
 	if got := plan.ProxyCommand(); got != want {
 		t.Errorf("ProxyCommand() = %s, want %s", got, want)
 	}
+
+	// log_dir moves the log, not the socket; ~ and variables are expanded.
+	prof.LogDir = "~/logs"
+	plan, err = buildBwrap(prof, opts, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, "logs", filepath.Base(logFile)); plan.Proxy.Log != want || plan.Proxy.Socket != sock {
+		t.Errorf("with log_dir: Log = %s, Socket = %s; want %s, %s", plan.Proxy.Log, plan.Proxy.Socket, want, sock)
+	}
+	prof.LogDir = ""
 
 	// Sharing the host network makes the proxy pointless; none is set up.
 	prof.Network = true

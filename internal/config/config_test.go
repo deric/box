@@ -26,6 +26,9 @@ func TestDefaultTOMLParses(t *testing.T) {
 	if len(p.Overlays) != 1 || p.Overlays[0].Path != "~/.local/share/mise" || !p.Overlays[0].Persist {
 		t.Errorf("unexpected default overlays: %+v", p.Overlays)
 	}
+	if p.LogDir != DefaultLogDir {
+		t.Errorf("LogDir = %q, want %q", p.LogDir, DefaultLogDir)
+	}
 	if p.Env["BOX_SANDBOX"] != "1" {
 		t.Errorf("BOX_SANDBOX not set: %v", p.Env)
 	}

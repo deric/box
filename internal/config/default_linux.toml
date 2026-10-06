@@ -56,10 +56,12 @@ sync_files = []
 # hosts matching allow_hosts can be reached: a name matches exactly, "*.x"
 # matches anything under x, "*" everything. Inside, HTTP_PROXY, HTTPS_PROXY
 # and NO_PROXY point at the proxy; programs that ignore them have no network.
-# Denied requests are logged to /tmp/box/<binary>-<pid>.log. Set
+# Denied requests are logged to <log_dir>/<binary>-<pid>-<dir>.log, where
+# <dir> is the working directory with slashes turned into dashes. Set
 # network = true to share the host network instead.
 network = false
 proxy = true
+log_dir = "/tmp/box"
 allow_hosts = [
   "api.dagger.cloud",
   "crates.io", "*.crates.io", "dl.google.com", "*.debian.org",
