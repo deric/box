@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `box info` prints the version, platform, isolation mechanism (`bwrap` or
+  `sandbox-exec`, with path and version), config and state locations and the
+  number of running sandboxes per binary.
+
 ## [0.1.1] - 2026-10-06
 
 ### Fixed

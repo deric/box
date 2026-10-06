@@ -18,6 +18,7 @@ box show claude                 # print the sandbox command line without running
 box config claude               # print the effective, merged profile
 box clean claude                # drop claude's overlay layers and stale private /tmp dirs
 box ps                          # list running sandboxes with process count, CPU, memory
+box info                        # print version, isolation mechanism, config path, running sandboxes
 ```
 
 ## Defaults (Linux)

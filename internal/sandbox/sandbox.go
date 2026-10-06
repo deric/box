@@ -317,21 +317,52 @@ func (p *Plan) environ() []string {
 	return append(out, p.Env...)
 }
 
+// Runner describes the isolation mechanism box uses on this host.
+type Runner struct {
+	Name      string // executable name: bwrap or sandbox-exec
+	Mechanism string // human-readable name: bubblewrap or Seatbelt
+	Exe       string // resolved path; empty when not installed
+	Version   string // as reported by the runner; empty when unknown
+}
+
+// LookupRunner finds the runner for this platform: sandbox-exec (Seatbelt)
+// on macOS, bwrap (bubblewrap) everywhere else. A missing executable is not
+// an error; Exe is left empty.
+func LookupRunner() Runner {
+	r := Runner{Name: "bwrap", Mechanism: "bubblewrap"}
+	if runtime.GOOS == "darwin" {
+		r = Runner{Name: "sandbox-exec", Mechanism: "Seatbelt"}
+	}
+	exe, err := exec.LookPath(r.Name)
+	if err != nil {
+		return r
+	}
+	r.Exe = exe
+	if r.Name == "bwrap" {
+		// Prints "bubblewrap 0.11.1".
+		if out, err := exec.Command(exe, "--version").Output(); err == nil {
+			if f := strings.Fields(string(out)); len(f) == 2 {
+				r.Version = f[1]
+			}
+		}
+	}
+	return r
+}
+
 // Build computes the sandbox invocation for the given profile and options:
 // sandbox-exec on macOS, bwrap everywhere else.
 func Build(prof config.Profile, opts Options) (*Plan, error) {
-	if runtime.GOOS == "darwin" {
-		exe, err := exec.LookPath("sandbox-exec")
-		if err != nil {
-			return nil, fmt.Errorf("sandbox-exec not found in PATH (expected /usr/bin/sandbox-exec)")
-		}
-		return buildSeatbelt(prof, opts, exe)
-	}
-	exe, err := exec.LookPath("bwrap")
-	if err != nil {
+	r := LookupRunner()
+	switch {
+	case r.Exe != "" && r.Name == "sandbox-exec":
+		return buildSeatbelt(prof, opts, r.Exe)
+	case r.Exe != "":
+		return buildBwrap(prof, opts, r.Exe)
+	case r.Name == "sandbox-exec":
+		return nil, fmt.Errorf("sandbox-exec not found in PATH (expected /usr/bin/sandbox-exec)")
+	default:
 		return nil, fmt.Errorf("bwrap not found in PATH: install bubblewrap")
 	}
-	return buildBwrap(prof, opts, exe)
 }
 
 // collect resolves the profile's mounts into a parents-first list. With
