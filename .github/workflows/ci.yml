@@ -39,7 +39,7 @@ jobs:
       - name: Smoke test (sandbox-exec)
         if: runner.os == 'macOS'
         run: |
-          go build -o box .
+          go build -o box ./cmd/box
           ./box show sh
           ./box run sh -c '
             echo "sandboxed as $(id -un) in $PWD"

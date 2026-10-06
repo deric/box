@@ -68,7 +68,7 @@ func (m *Box) Build(
 		WithExec([]string{
 			"go", "build", "-trimpath",
 			"-ldflags", "-s -w -X main.version=" + version,
-			"-o", "/out/box", ".",
+			"-o", "/out/box", "./cmd/box",
 		}).
 		File("/out/box")
 }
