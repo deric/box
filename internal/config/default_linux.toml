@@ -56,10 +56,13 @@ copy_files = []
 network = false
 proxy = true
 allow_hosts = [
-  "crates.io", "*.crates.io", "dl.google.com", "files.pythonhosted.org",
+  "api.dagger.cloud",
+  "crates.io", "*.crates.io", "dl.google.com", "*.debian.org",
+  "files.pythonhosted.org",
+  "icinga.com", "index.rubygems.org",
   "github.com", "*.github.com", "*.githubusercontent.com", "gitlab.com",
   "go.dev", "proxy.golang.org", "pypi.org",
-  "registry.npmjs.org", "rubygems.org",
+  "registry.npmjs.org", "rubygems.org", "registry.dagger.io",
   "sum.golang.org", "storage.googleapis.com",
 ]
 

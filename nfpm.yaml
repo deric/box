@@ -1,0 +1,27 @@
+# Package metadata for deb and rpm builds; see https://nfpm.goreleaser.com/configuration/
+# Run through Dagger: `dagger call package --version=v1.2.3 export --path=dist`
+# (VERSION and ARCH are set by the Dagger module, see .dagger/main.go).
+name: box
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: utils
+priority: optional
+maintainer: Tomas Barton <barton.tomas@gmail.com>
+description: |
+  Sandbox for running agents.
+  box runs a program inside a bubblewrap sandbox with sensible defaults,
+  configured per binary from ~/.config/box/box.toml.
+vendor: Tomas Barton
+homepage: https://github.com/deric/box
+license: Apache-2.0
+depends:
+  - bubblewrap
+contents:
+  - src: ./box
+    dst: /usr/bin/box
+  - src: ./README.md
+    dst: /usr/share/doc/box/README.md
+  - src: ./LICENSE
+    dst: /usr/share/doc/box/LICENSE
+    type: license

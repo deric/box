@@ -68,6 +68,16 @@ tasks:
     cmds:
       - go mod tidy
 
+  package:
+    desc: Build tar.gz, deb and rpm packages for linux and darwin into ./dist (needs dagger)
+    cmds:
+      - dagger call package --version={{.VERSION}} export --path=dist
+
+  package:check:
+    desc: Install the deb and rpm into fresh containers and run box version (needs dagger)
+    cmds:
+      - dagger call check --version={{.VERSION}}
+
   install:
     desc: Install box into INSTALL_DIR (default ~/.local/bin)
     deps: [build]

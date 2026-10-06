@@ -2,3 +2,4 @@
 go = "1.27"
 task = "latest"
 golangci-lint = "2.14.0"
+dagger = "0.21"
