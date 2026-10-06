@@ -139,13 +139,16 @@ func TestDefaultTOMLClaude(t *testing.T) {
 		}
 	}
 	if contains(p.RWBinds, "?~/.claude") || contains(p.RWBinds, "?~/.claude.json") {
-		t.Errorf("~/.claude must be an overlay and ~/.claude.json a copy, not rw_binds %v", p.RWBinds)
+		t.Errorf("~/.claude must be an overlay and ~/.claude.json a synced copy, not rw_binds %v", p.RWBinds)
 	}
 	if len(p.Overlays) != 2 || p.Overlays[1].Path != "?~/.claude" || p.Overlays[1].Persist {
 		t.Errorf("want a temporary ~/.claude overlay after the default one, got %+v", p.Overlays)
 	}
-	if got, want := p.CopyFiles, []string{"?~/.claude.json"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("copy_files = %v, want %v", got, want)
+	if got, want := p.SyncFiles, []string{"?~/.claude.json"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sync_files = %v, want %v", got, want)
+	}
+	if len(p.CopyFiles) != 0 {
+		t.Errorf("copy_files = %v, want none (~/.claude.json is synced, not copied)", p.CopyFiles)
 	}
 	if !contains(p.PassEnv, "HOME") || !contains(p.PassEnv, "ANTHROPIC_*") {
 		t.Errorf("pass_env = %v, want defaults plus ANTHROPIC_*", p.PassEnv)

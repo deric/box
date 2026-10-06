@@ -85,7 +85,7 @@ env       = { BOX_SANDBOX = "1" }
 [binaries.claude]
 overlays   = [{ path = "?~/.claude", persist = false }]
 rw_binds   = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
-copy_files = ["?~/.claude.json"]
+sync_files = ["?~/.claude.json"]
 pass_env   = ["ANTHROPIC_*", "CLAUDE_*"]
 allow_hosts = ["*.anthropic.com", "claude.ai", "*.claude.ai"]
 
@@ -111,6 +111,7 @@ with `?` to skip silently.
 | `tmpfs`           | list              | fresh tmpfs mounts                                             |
 | `overlays`        | list              | `"path"` or `{ path, persist }`; `persist = false` discards writes on exit |
 | `copy_files`      | list              | host files copied into the sandbox (`--file`); changes made inside never reach the host |
+| `sync_files`      | list              | like `copy_files`, but the copy is written back over the host file when the command exits |
 | `drop_binds`      | list              | inherited entries to remove (binary sections only)             |
 | `network`         | bool              | share the host network; `false` gives an empty namespace       |
 | `proxy`           | bool              | with `network = false`: reach `allow_hosts` through a proxy on the host |
@@ -145,7 +146,7 @@ the Linux sandbox as closely as Seatbelt allows:
 | unmounted paths are absent            | unlisted paths are denied; `stat` still works everywhere so path resolution does |
 | `tmpfs`: empty, writable, discarded   | hidden: contents can be neither read nor written              |
 | `overlays`                            | read-only (with a warning)                                    |
-| `copy_files`, `private_tmp`, `proxy`  | not supported (warned and ignored)                            |
+| `copy_files`, `sync_files`, `private_tmp`, `proxy` | not supported (warned and ignored)               |
 | `network = false`: own empty netns    | no IP traffic at all, loopback included                       |
 | Unix sockets under mounted paths      | Unix sockets under exposed paths                              |
 | PID / IPC namespaces                  | processes may only inspect and signal their own sandbox; Mach services are limited to a short list (name lookup, logging, and with network: DNS and TLS trust) |
@@ -243,12 +244,23 @@ the same build in CI and attaches the artifacts to a GitHub release.
   inside lose job control.
 - `copy_files` opens each file before `exec` and hands the descriptor to
   `bwrap`, which writes a copy at the same path with the host file's mode
-  (`box show` prints the matching `N<file` redirection). Claude Code's
-  defaults use this for `~/.claude.json` and a temporary overlay for
-  `~/.claude`, so only `~/.claude/projects` (sessions, memory) and
-  `~/.claude/.credentials.json` (tokens are refreshed in place) are written
-  back to the host; settings edits made inside the sandbox are lost when it
-  exits.
+  (`box show` prints the matching `N<file` redirection). `sync_files` does
+  the same and additionally binds the host original read-write under
+  `/run/box/sync/`; when the command exits, the `box _forward` wrapper that
+  runs it compares the copy with the original and, if they differ, rewrites
+  the original in place (same inode, mode and owner). This suits files their
+  owner saves by writing a temporary file and renaming it over the original,
+  which fails with `EBUSY` on a file that is itself a bind mount. Claude
+  Code's `~/.claude.json` (folder trust, MCP servers, account state) is such
+  a file, so its defaults use `sync_files` for it and a temporary overlay for
+  `~/.claude`: `~/.claude.json`, `~/.claude/projects` (sessions, memory) and
+  `~/.claude/.credentials.json` (tokens are refreshed in place) reach the
+  host, while other edits under `~/.claude` are lost when the sandbox exits.
+  The write-back happens once, on exit: a sandbox that is killed outright
+  leaves the host file untouched, and when two sandboxes edit the same file
+  the last one to exit wins (a warning is printed when the host file changed
+  while the sandbox ran). Since the original is writable from inside the
+  sandbox, list only files the program may legitimately change.
 - With `private_tmp` (the Linux default) each sandbox gets a fresh host
   directory `/tmp/box/<name>-<pid>` mounted as `/tmp`, where `<pid>` is the
   PID `box ps` shows. Nothing other host processes put in `/tmp` (X11

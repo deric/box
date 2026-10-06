@@ -123,6 +123,9 @@ type Plan struct {
 	Files map[int]string
 	// Proxy, when set, is started on the host before the runner.
 	Proxy *Proxy
+	// Sync lists copies (sync_files) written back to their host originals
+	// by the forwarder when the command exits.
+	Sync []SyncFile
 	// Self is the box executable (Options.Self).
 	Self string
 	// Dir, ClearEnv, UnsetEnv and Env set up the runner's own working
@@ -396,6 +399,23 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			add(m)
 		}
 	}
+	for _, p := range prof.SyncFiles {
+		if resolveLinks {
+			plan.Warnings = append(plan.Warnings, "sync_files is not supported on this platform; ignored")
+			break
+		}
+		m := copyFile(exp, p, plan)
+		if m == nil {
+			continue
+		}
+		// The original is bound where the forwarder can rewrite it in
+		// place; the copy at the real path may be replaced freely.
+		sf := SyncFile{Path: m.dest, Mount: filepath.Join(SyncDir, strconv.Itoa(len(plan.Sync)))}
+		plan.Sync = append(plan.Sync, sf)
+		plan.Self = opts.Self
+		add(m)
+		add(&mount{kind: kindRW, src: m.src, dest: sf.Mount})
+	}
 	if prof.Proxy && !prof.Network {
 		if resolveLinks {
 			plan.Warnings = append(plan.Warnings, "proxy is not supported on this platform; ignored (no network)")
@@ -454,7 +474,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 	if prof.BindBinary {
 		expose = append(expose, resolved)
 	}
-	if plan.Proxy != nil {
+	if plan.Proxy != nil || len(plan.Sync) > 0 {
 		expose = append(expose, opts.Self) // runs the forwarder inside
 	}
 	for _, e := range expose {
