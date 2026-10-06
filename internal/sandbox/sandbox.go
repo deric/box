@@ -53,16 +53,32 @@ type Proxy struct {
 	Allow  []string // allowed destination hosts
 }
 
-// ProxyFiles returns the socket and log paths for sandbox name/id under
-// root, next to its private /tmp directory. The log name also carries the
-// sandbox's working directory, without its leading slash and with every
-// other slash replaced by a dash, so logs of the same binary started from
-// different places can be told apart: <root>/<name>-<id>-home-user-project.log.
-func ProxyFiles(root, name, id, cwd string) (socket, logFile string) {
-	base := TmpDir(root, name, id)
+// ProxyFiles returns the socket and log paths for sandbox name/id: the
+// socket lives under root, next to the private /tmp directory, the log under
+// logDir. The log name also carries the sandbox's working directory, without
+// its leading slash and with every other slash replaced by a dash, so logs of
+// the same binary started from different places can be told apart:
+// <logDir>/<name>-<id>-home-user-project.log.
+func ProxyFiles(root, logDir, name, id, cwd string) (socket, logFile string) {
 	sep := string(filepath.Separator)
 	dir := strings.ReplaceAll(strings.TrimPrefix(filepath.Clean(cwd), sep), sep, "-")
-	return base + ".sock", base + "-" + dir + ".log"
+	return TmpDir(root, name, id) + ".sock", filepath.Join(logDir, name+"-"+id+"-"+dir+".log")
+}
+
+// LogDir returns the directory prof's proxy logs are written to: log_dir
+// expanded like any other configured path, or opts.TmpRoot when it is empty.
+func LogDir(prof config.Profile, opts Options) (string, error) {
+	if err := fillDefaults(&opts); err != nil {
+		return "", err
+	}
+	return logDir(prof, opts), nil
+}
+
+func logDir(prof config.Profile, opts Options) string {
+	if dir, _ := expander(opts)(prof.LogDir); dir != "" {
+		return dir
+	}
+	return opts.TmpRoot
 }
 
 // DefaultTmpRoot is the host directory under which private /tmp directories
@@ -236,6 +252,11 @@ func (p *Plan) startProxy() (*os.Process, error) {
 	}
 	if err := makeTmpRoot(filepath.Dir(p.Proxy.Socket)); err != nil {
 		return nil, err
+	}
+	if dir := filepath.Dir(p.Proxy.Log); dir != filepath.Dir(p.Proxy.Socket) {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
 	}
 	if err := os.Remove(p.Proxy.Socket); err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -456,7 +477,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 		if resolveLinks {
 			plan.Warnings = append(plan.Warnings, "proxy is not supported on this platform; ignored (no network)")
 		} else {
-			sock, logFile := ProxyFiles(opts.TmpRoot, plan.Name, opts.ID, opts.Cwd)
+			sock, logFile := ProxyFiles(opts.TmpRoot, logDir(prof, *opts), plan.Name, opts.ID, opts.Cwd)
 			plan.Proxy = &Proxy{Socket: sock, Log: logFile, Allow: prof.AllowHosts}
 			plan.Self = opts.Self
 			// The socket is created by Exec, so it cannot be checked here.

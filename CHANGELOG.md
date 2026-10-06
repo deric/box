@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sandbox-exec`, with path and version), config and state locations and the
   number of running sandboxes per binary.
 
+- `log_dir` sets the directory the proxy writes its denied-request logs to
+  (default `/tmp/box`); `box info` shows it and `box clean` removes stale logs
+  from it.
+
 ### Changed
 
 - The proxy log is named `/tmp/box/<name>-<pid>-<dir>.log`, with `<dir>` the

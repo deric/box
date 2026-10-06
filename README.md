@@ -18,7 +18,7 @@ box show claude                 # print the sandbox command line without running
 box config claude               # print the effective, merged profile
 box clean claude                # drop claude's overlay layers and stale private /tmp dirs
 box ps                          # list running sandboxes with process count, CPU, memory
-box info                        # print version, isolation mechanism, config path, running sandboxes
+box info                        # print version, isolation mechanism, config path, log dir, running sandboxes
 ```
 
 ## Defaults (Linux)
@@ -53,8 +53,10 @@ exposes it on `127.0.0.1:3128` and sets `HTTP_PROXY`, `HTTPS_PROXY` and
 handles `CONNECT` (HTTPS) and plain HTTP requests and only lets them through
 to hosts on `allow_hosts`: an entry is an exact name, `*.suffix` for anything
 under a domain, or `*`. Everything else gets `403 Forbidden` and a line in
-`/tmp/box/<name>-<pid>-<dir>.log`, where `<dir>` is the working directory
-without its leading slash and with the other slashes replaced by dashes. Names that match only through a wildcard may not
+`<log_dir>/<name>-<pid>-<dir>.log` (`log_dir` defaults to `/tmp/box`), where
+`<dir>` is the working directory without its leading slash and with the other
+slashes replaced by dashes. `box info` shows the log directory in use and
+`box clean` removes logs of sandboxes that have exited. Names that match only through a wildcard may not
 resolve to loopback or link-local addresses, so a `*` entry does not reach
 services on the host. Programs that ignore the proxy variables have no
 network at all. `box show` prints the proxy command along with the `bwrap`
@@ -118,6 +120,7 @@ with `?` to skip silently.
 | `network`         | bool              | share the host network; `false` gives an empty namespace       |
 | `proxy`           | bool              | with `network = false`: reach `allow_hosts` through a proxy on the host |
 | `allow_hosts`     | list              | hosts the proxy lets through: `name`, `*.suffix` or `*`        |
+| `log_dir`         | string            | directory for the proxy's denied-request logs (default `/tmp/box`) |
 | `hostname`        | string            | hostname inside the sandbox; empty keeps the host's            |
 | `new_session`     | bool              | `--new-session` (blocks TIOCSTI, breaks shell job control)     |
 | `disable_userns`  | bool              | `--disable-userns`: no user namespaces inside, so no nested sandboxes |

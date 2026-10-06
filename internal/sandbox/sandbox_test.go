@@ -338,6 +338,17 @@ func TestBuildProxy(t *testing.T) {
 		t.Errorf("ProxyCommand() = %s, want %s", got, want)
 	}
 
+	// log_dir moves the log, not the socket; ~ and variables are expanded.
+	prof.LogDir = "~/logs"
+	plan, err = buildBwrap(prof, opts, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, "logs", filepath.Base(logFile)); plan.Proxy.Log != want || plan.Proxy.Socket != sock {
+		t.Errorf("with log_dir: Log = %s, Socket = %s; want %s, %s", plan.Proxy.Log, plan.Proxy.Socket, want, sock)
+	}
+	prof.LogDir = ""
+
 	// Sharing the host network makes the proxy pointless; none is set up.
 	prof.Network = true
 	plan, err = buildBwrap(prof, opts, "bwrap")
