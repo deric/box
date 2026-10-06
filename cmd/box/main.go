@@ -261,6 +261,11 @@ func cleanTmp(filter string) (int, error) {
 				continue
 			}
 			name = strings.TrimSuffix(name, ext)
+			if ext == ".log" {
+				// Drop the working directory, which starts with the
+				// dash that replaced its leading slash.
+				name, _, _ = strings.Cut(name, "--")
+			}
 		}
 		i := strings.LastIndex(name, "-")
 		if i <= 0 || (filter != "" && name[:i] != filter) {

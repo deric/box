@@ -53,7 +53,8 @@ exposes it on `127.0.0.1:3128` and sets `HTTP_PROXY`, `HTTPS_PROXY` and
 handles `CONNECT` (HTTPS) and plain HTTP requests and only lets them through
 to hosts on `allow_hosts`: an entry is an exact name, `*.suffix` for anything
 under a domain, or `*`. Everything else gets `403 Forbidden` and a line in
-`/tmp/box/<name>-<pid>.log`. Names that match only through a wildcard may not
+`/tmp/box/<name>-<pid>-<dir>.log`, where `<dir>` is the working directory
+with slashes replaced by dashes. Names that match only through a wildcard may not
 resolve to loopback or link-local addresses, so a `*` entry does not reach
 services on the host. Programs that ignore the proxy variables have no
 network at all. `box show` prints the proxy command along with the `bwrap`

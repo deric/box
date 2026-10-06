@@ -54,10 +54,14 @@ type Proxy struct {
 }
 
 // ProxyFiles returns the socket and log paths for sandbox name/id under
-// root, next to its private /tmp directory.
-func ProxyFiles(root, name, id string) (socket, logFile string) {
+// root, next to its private /tmp directory. The log name also carries the
+// sandbox's working directory with every slash replaced by a dash, so logs
+// of the same binary started from different places can be told apart:
+// <root>/<name>-<id>--home-user-project.log.
+func ProxyFiles(root, name, id, cwd string) (socket, logFile string) {
 	base := TmpDir(root, name, id)
-	return base + ".sock", base + ".log"
+	dir := strings.ReplaceAll(filepath.Clean(cwd), string(filepath.Separator), "-")
+	return base + ".sock", base + "-" + dir + ".log"
 }
 
 // DefaultTmpRoot is the host directory under which private /tmp directories
@@ -451,7 +455,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 		if resolveLinks {
 			plan.Warnings = append(plan.Warnings, "proxy is not supported on this platform; ignored (no network)")
 		} else {
-			sock, logFile := ProxyFiles(opts.TmpRoot, plan.Name, opts.ID)
+			sock, logFile := ProxyFiles(opts.TmpRoot, plan.Name, opts.ID, opts.Cwd)
 			plan.Proxy = &Proxy{Socket: sock, Log: logFile, Allow: prof.AllowHosts}
 			plan.Self = opts.Self
 			// The socket is created by Exec, so it cannot be checked here.

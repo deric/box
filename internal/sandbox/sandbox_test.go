@@ -313,7 +313,8 @@ func TestBuildProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	sock := filepath.Join(root, "tool-7.sock")
-	if plan.Proxy == nil || plan.Proxy.Socket != sock || plan.Proxy.Log != filepath.Join(root, "tool-7.log") ||
+	logFile := filepath.Join(root, "tool-7-"+strings.ReplaceAll(cwd, "/", "-")+".log")
+	if plan.Proxy == nil || plan.Proxy.Socket != sock || plan.Proxy.Log != logFile ||
 		len(plan.Proxy.Allow) != 2 {
 		t.Fatalf("Proxy = %+v", plan.Proxy)
 	}
@@ -332,7 +333,7 @@ func TestBuildProxy(t *testing.T) {
 	if strings.Contains(cmd, "--share-net") {
 		t.Error("network must not be shared when going through the proxy")
 	}
-	want := self + " _proxy -s " + sock + " -l " + filepath.Join(root, "tool-7.log") + " -a api.anthropic.com -a '*.github.com'"
+	want := self + " _proxy -s " + sock + " -l " + logFile + " -a api.anthropic.com -a '*.github.com'"
 	if got := plan.ProxyCommand(); got != want {
 		t.Errorf("ProxyCommand() = %s, want %s", got, want)
 	}
