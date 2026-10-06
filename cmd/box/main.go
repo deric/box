@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -34,6 +36,7 @@ Usage:
   box init [-c FILE]                                 write the default config file
   box clean [<command>]                              delete overlay layers and stale /tmp dirs
   box ps [<command>]                                 list running sandboxes
+  box info [-c FILE]                                 print version, isolation mechanism, config path
   box version
 
 Flags:
@@ -61,6 +64,8 @@ func main() {
 		err = cmdClean(os.Args[2:])
 	case "ps":
 		err = cmdPs(os.Args[2:])
+	case "info":
+		err = cmdInfo(os.Args[2:])
 	case "_proxy":
 		err = cmdProxy(os.Args[2:])
 	case "_forward":
@@ -300,6 +305,92 @@ func cmdPs(argv []string) error {
 		}
 	}
 	return w.Flush()
+}
+
+// cmdInfo prints what box would use on this host: its version, the
+// isolation mechanism, the configuration and state locations and how many
+// sandboxes are running.
+func cmdInfo(argv []string) error {
+	var c common
+	fs := newFlagSet("info", &c)
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	configPath := c.configPath
+	if configPath == "" {
+		var err error
+		if configPath, err = config.Path(); err != nil {
+			return err
+		}
+	}
+	configNote := ""
+	switch _, err := os.Stat(configPath); {
+	case os.IsNotExist(err):
+		configNote = " (missing, using built-in defaults; run `box init`)"
+	case err != nil:
+		configNote = " (" + err.Error() + ")"
+	}
+	stateDir, err := config.StateDir()
+	if err != nil {
+		return err
+	}
+
+	r := sandbox.LookupRunner()
+	runner := r.Mechanism + " (" + r.Name
+	if r.Version != "" {
+		runner += " " + r.Version
+	}
+	runner += ")"
+	if r.Exe == "" {
+		runner += " - not found in PATH"
+	} else {
+		runner += " at " + r.Exe
+	}
+
+	running := countSandboxes()
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	rows := [][2]string{
+		{"version", version},
+		{"platform", runtime.GOOS + "/" + runtime.GOARCH},
+		{"isolation", runner},
+		{"config", configPath + configNote},
+		{"state dir", stateDir},
+		{"tmp root", sandbox.DefaultTmpRoot},
+		{"running", running},
+	}
+	for _, row := range rows {
+		if _, err := fmt.Fprintf(w, "%s:\t%s\n", row[0], row[1]); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
+}
+
+// countSandboxes describes the running sandboxes as a total followed by a
+// per-binary breakdown, e.g. "3 (claude 2, sh 1)".
+func countSandboxes() string {
+	list, err := procs.Sandboxes()
+	if err != nil {
+		return "unknown (" + err.Error() + ")"
+	}
+	if len(list) == 0 {
+		return "0"
+	}
+	counts := map[string]int{}
+	for _, s := range list {
+		counts[s.Name]++
+	}
+	names := make([]string, 0, len(counts))
+	for name := range counts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	parts := make([]string, len(names))
+	for i, name := range names {
+		parts[i] = fmt.Sprintf("%s %d", name, counts[name])
+	}
+	return fmt.Sprintf("%d (%s)", len(list), strings.Join(parts, ", "))
 }
 
 // formatDuration renders d compactly at whole-second precision: 45s, 3m07s,

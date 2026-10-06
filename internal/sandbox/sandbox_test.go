@@ -2,7 +2,9 @@ package sandbox
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -544,5 +546,28 @@ func TestParseSyncFile(t *testing.T) {
 		if _, err := ParseSyncFile(bad); err == nil {
 			t.Errorf("ParseSyncFile(%q) should fail", bad)
 		}
+	}
+}
+
+func TestLookupRunner(t *testing.T) {
+	r := LookupRunner()
+	want := "bwrap"
+	if runtime.GOOS == "darwin" {
+		want = "sandbox-exec"
+	}
+	if r.Name != want || r.Mechanism == "" {
+		t.Fatalf("LookupRunner() = %+v, want name %q with a mechanism", r, want)
+	}
+	if _, err := exec.LookPath(want); err != nil {
+		if r.Exe != "" {
+			t.Fatalf("Exe = %q, want empty when %s is not installed", r.Exe, want)
+		}
+		return
+	}
+	if r.Exe == "" {
+		t.Fatalf("Exe is empty although %s is installed", want)
+	}
+	if want == "bwrap" && r.Version == "" {
+		t.Fatalf("Version is empty for %s", r.Exe)
 	}
 }
