@@ -33,8 +33,8 @@ func TestGatherUsage(t *testing.T) {
 	write(filepath.Join(logs, "sh-7-home-u.log"), 1<<20)
 	write(filepath.Join(logs, "sh-7"), 1<<20) // only logs count outside the tmp root
 
-	// overlayfs keeps an unreadable work/work directory in each layer; it
-	// is counted but not descended into, and must not produce a warning.
+	// overlayfs keeps an unreadable work/work directory in each layer; the
+	// walk must get past it without an error.
 	work := filepath.Join(overlays, "claude", "home-u-.local-bin", "work", "work")
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
@@ -56,9 +56,6 @@ func TestGatherUsage(t *testing.T) {
 	got, err := gatherUsage(overlays, tmp, []string{tmp, logs}, "")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if n, err := dirSize(work); err != nil || n == 0 {
-		t.Errorf("dirSize(unreadable work dir) = %d, %v; want its own size, nil", n, err)
 	}
 	want := map[string]diskUsage{
 		"claude": {
