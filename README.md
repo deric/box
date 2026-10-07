@@ -18,6 +18,7 @@ box show claude                 # print the sandbox command line without running
 box config claude               # print the effective, merged profile
 box clean claude                # drop claude's overlay layers and stale private /tmp dirs
 box ps                          # list running sandboxes with process count, CPU, memory
+box top                         # the same as a live view that refreshes every second
 box info                        # print version, isolation mechanism, config path, log dir, running sandboxes
 ```
 
@@ -236,6 +237,13 @@ the same build in CI and attaches the artifacts to a GitHub release.
   child of the forwarder, which passes signals and the exit status through.
 - `box` sets bwrap's `argv[0]` to `box:<name>`, which is how `box ps` finds
   its sandboxes; stats cover the whole process tree under that bwrap.
+- `box top` is `box ps` as a full-screen view that refreshes every second
+  (`-i 2s` changes that, `+`/`-` adjust it while running). `CPU%` is the
+  tree's CPU time per wall-clock time since the previous refresh, so `100`
+  is one busy core; a sandbox seen for the first time shows its lifetime
+  average. Sort with `c` (CPU), `m` (memory), `p` (processes), `t` (uptime)
+  or `n` (name), `r` reverses, `q` quits. A name argument limits the view to
+  one binary, as with `box ps`.
 - Mounts are applied parents-first, so a tmpfs on `$HOME` never hides a bind
   or overlay placed underneath it.
 - The Linux defaults clear the environment and pass through an explicit list

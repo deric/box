@@ -36,6 +36,7 @@ Usage:
   box init [-c FILE]                                 write the default config file
   box clean [-c FILE] [<command>]                    delete overlay layers, stale /tmp dirs and logs
   box ps [<command>]                                 list running sandboxes
+  box top [-i DURATION] [<command>]                  watch running sandboxes in the terminal
   box info [-c FILE]                                 print version, isolation mechanism, config path, log dir
   box version
 
@@ -43,6 +44,10 @@ Flags:
   -n, --dry-run   print the sandbox command instead of running it
   -v, --verbose   print the sandbox command before running it
   -c, --config    configuration file (default $BOX_CONFIG or ~/.config/box/box.toml)
+  -i, --interval  refresh interval of box top (default 1s)
+
+Keys in box top:
+  q quit   c/m/p/t/n sort by cpu, memory, processes, uptime, name   r reverse   +/- interval
 `
 
 func main() {
@@ -64,6 +69,8 @@ func main() {
 		err = cmdClean(os.Args[2:])
 	case "ps":
 		err = cmdPs(os.Args[2:])
+	case "top":
+		err = cmdTop(os.Args[2:])
 	case "info":
 		err = cmdInfo(os.Args[2:])
 	case "_proxy":
