@@ -5,7 +5,9 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+[Unreleased]: https://github.com/deric/box/compare/v0.2.0...HEAD
+
+## [0.2.0] - 2026-10-07
 
 ### Added
 
@@ -44,12 +46,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dashes, so logs of one binary started from different directories can be
   told apart.
 
-## [0.1.1] - 2026-10-06
-
 ### Fixed
 
 - `go install github.com/deric/box/cmd/box@latest` failed because `go.mod`
   declared the module path as `box`; it is now `github.com/deric/box`.
+
+[Full changes]: https://github.com/deric/box/compare/v0.1.1...v0.2.0
+[0.2.0]: https://github.com/deric/box/releases/tag/v0.2.0
+
+## [0.1.1] - 2026-10-06
+
+### Fixed
 
 - Release workflow failed to resolve `dagger/dagger-for-github@v8` because no
   floating `v8` tag exists; the action is now pinned to `v8.4.1`.
@@ -68,5 +75,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - User namespace creation is disabled inside the sandbox.
 - Packaging with nfpm and a Dagger-based release pipeline.
 
-[Unreleased]: https://github.com/deric/box/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/deric/box/releases/tag/v0.1.1
