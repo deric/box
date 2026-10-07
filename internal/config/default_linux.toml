@@ -39,6 +39,7 @@ private_tmp = true
 # persist = false it is discarded when the sandbox exits.
 overlays = [
   { path = "~/.local/share/mise", persist = true },
+  { path = "?~/.local/bin", persist = true },
 ]
 
 # Host files copied into the sandbox: the program sees the host content at
