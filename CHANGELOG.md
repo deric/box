@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `box df` prints the disk usage of each binary's sandboxes on the host:
   persistent overlay layers, private `/tmp` directories and proxy logs, with
-  a total; a name argument limits it to one binary.
+  a total; a name argument limits it to one binary and `-a` lists every
+  layer, directory and log separately.
 
 - `box info` prints the version, platform, isolation mechanism (`bwrap` or
   `sandbox-exec`, with path and version), config and state locations and the

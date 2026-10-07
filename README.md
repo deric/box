@@ -18,6 +18,7 @@ box show claude                 # print the sandbox command line without running
 box config claude               # print the effective, merged profile
 box clean claude                # drop claude's overlay layers and stale private /tmp dirs
 box df                          # disk usage per binary: overlay layers, private /tmp dirs, logs
+box df -a claude                # the same listing every layer, /tmp dir and log of claude
 box ps                          # list running sandboxes with process count, CPU, memory
 box top                         # the same as a live view that refreshes every second
 box info                        # print version, isolation mechanism, config path, log dir, running sandboxes
@@ -255,7 +256,8 @@ the same build in CI and attaches the artifacts to a GitHub release.
   the persistent overlay layers, the private `/tmp` directories (of running
   and exited sandboxes alike) and the proxy logs, which is what `box clean`
   removes. Sizes are allocated blocks, as `du` reports them. A name argument
-  limits it to one binary.
+  limits it to one binary; `-a` lists every layer, directory and log on its
+  own row instead of the per-binary sums.
 - Mounts are applied parents-first, so a tmpfs on `$HOME` never hides a bind
   or overlay placed underneath it.
 - The Linux defaults clear the environment and pass through an explicit list
