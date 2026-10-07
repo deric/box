@@ -1,7 +1,13 @@
 package config
 
 import (
+	"bytes"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -204,5 +210,101 @@ seatbelt_rules = ["(allow b)"]
 	}
 	if got, want := c.Resolve("x").SeatbeltRules, []string{"(allow a)", "(allow b)"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("seatbelt_rules = %v, want %v", got, want)
+	}
+}
+
+func TestWriteDefaultRefusesExisting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "box.toml")
+	if err := WriteDefault(path, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[default]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := WriteDefault(path, false)
+	if !errors.Is(err, ErrExists) {
+		t.Fatalf("expected ErrExists, got %v", err)
+	}
+	if err := WriteDefault(path, true); err != nil {
+		t.Fatalf("force overwrite failed: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != DefaultTOML {
+		t.Fatal("force overwrite did not restore the defaults")
+	}
+}
+
+func TestDiffDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "box.toml")
+	if err := os.WriteFile(path, []byte(DefaultTOML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	differs, err := DiffDefault(path, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if differs || out.Len() != 0 {
+		t.Fatalf("expected no diff for identical file, got:\n%s", out.String())
+	}
+
+	modified := DefaultTOML + "\n[custom]\nnetwork = false\n"
+	if err := os.WriteFile(path, []byte(modified), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	differs, err = DiffDefault(path, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !differs {
+		t.Fatal("expected modified file to differ")
+	}
+	for _, want := range []string{"--- " + path, "+++ box defaults", "-[custom]", "-network = false"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("diff missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestLookupDiffToolPrefersColordiff(t *testing.T) {
+	diff, err := exec.LookPath("diff")
+	if err != nil {
+		t.Skip("diff not installed")
+	}
+	bin := t.TempDir()
+	if err := os.Symlink(diff, filepath.Join(bin, "diff")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	// Only diff on PATH: fall back silently.
+	got, err := lookupDiffTool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != filepath.Join(bin, "diff") {
+		t.Fatalf("expected fallback to diff, got %s", got)
+	}
+
+	// colordiff present: prefer it.
+	if err := os.Symlink(diff, filepath.Join(bin, "colordiff")); err != nil {
+		t.Fatal(err)
+	}
+	got, err = lookupDiffTool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != filepath.Join(bin, "colordiff") {
+		t.Fatalf("expected colordiff, got %s", got)
+	}
+
+	// Neither present: error.
+	t.Setenv("PATH", t.TempDir())
+	if _, err := lookupDiffTool(); err == nil {
+		t.Fatal("expected error when no diff tool is available")
 	}
 }

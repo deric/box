@@ -2,9 +2,13 @@
 package config
 
 import (
+	"bytes"
 	_ "embed"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -209,16 +213,62 @@ func Load(path string) (*Config, bool, error) {
 	return c, true, nil
 }
 
-// WriteDefault writes DefaultTOML to path, creating parent directories. It
-// refuses to overwrite an existing file.
-func WriteDefault(path string) error {
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("%s already exists", path)
+// ErrExists is returned by WriteDefault when the target file already exists.
+var ErrExists = errors.New("config file already exists")
+
+// WriteDefault writes DefaultTOML to path, creating parent directories. Unless
+// force is set it refuses to overwrite an existing file and returns ErrExists.
+func WriteDefault(path string, force bool) error {
+	if _, err := os.Stat(path); err == nil && !force {
+		return fmt.Errorf("%s: %w", path, ErrExists)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, []byte(DefaultTOML), 0o644)
+}
+
+// DiffDefault writes a unified diff between the file at path and the
+// built-in DefaultTOML to w and reports whether the two differ. It shells out
+// to colordiff(1) when available, falling back to diff(1). Nothing is written
+// when the file matches the defaults.
+func DiffDefault(path string, w io.Writer) (bool, error) {
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	if string(current) == DefaultTOML {
+		return false, nil
+	}
+	diff, err := lookupDiffTool()
+	if err != nil {
+		return false, err
+	}
+	cmd := exec.Command(diff, "-u", "-L", path, "-L", "box defaults", path, "-")
+	cmd.Stdin = strings.NewReader(DefaultTOML)
+	cmd.Stdout = w
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		// diff exits 1 when the inputs differ; anything else is a failure.
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return false, fmt.Errorf("diff failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+	}
+	return true, nil
+}
+
+// lookupDiffTool returns the path to colordiff if installed, otherwise diff.
+func lookupDiffTool() (string, error) {
+	if p, err := exec.LookPath("colordiff"); err == nil {
+		return p, nil
+	}
+	p, err := exec.LookPath("diff")
+	if err != nil {
+		return "", fmt.Errorf("diff tool not found: %w", err)
+	}
+	return p, nil
 }
 
 // Resolve merges the default section with the section for name (the binary's
