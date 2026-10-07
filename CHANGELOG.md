@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (default `/tmp/box`); `box info` shows it and `box clean` removes stale logs
   from it.
 
+- `~/.local/bin` is mounted as a persistent overlay by default on Linux (and
+  read-only on macOS): tools installed inside the sandbox, e.g. with
+  `go install` or `pip install --user`, land in the per-binary upper layer
+  and survive across runs without touching the host directory.
+
 ### Changed
 
 - The minimum Go version to build is 1.24 (was 1.27); `golang.org/x/sys` is

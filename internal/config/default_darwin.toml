@@ -20,7 +20,7 @@ ro_binds = [
   "?/private/var/select", "?/private/var/db/timezone", "?/private/var/db/dyld",
   "?/private/var/db/xcode_select_link", "?/private/var/run/resolv.conf",
   "?/opt/homebrew", "?/Applications/Xcode.app",
-  "?~/.local/share/mise", "?~/.config/mise", "?~/.gitconfig",
+  "?~/.local/share/mise", "?~/.local/bin", "?~/.config/mise", "?~/.gitconfig",
 ]
 
 # Host paths readable and writable. $TMPDIR is the per-user temporary

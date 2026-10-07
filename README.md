@@ -31,7 +31,7 @@ box info                        # print version, isolation mechanism, config pat
 | `/tmp`                           | private: a fresh host dir `/tmp/box/<name>-<pid>`    |
 | `/var/tmp`                       | empty tmpfs                                          |
 | `$HOME`                          | empty tmpfs; only listed paths underneath are visible |
-| `~/.local/share/mise`            | overlay: host content visible, writes land in a per-binary upper layer under `~/.local/state/box/overlays/` |
+| `~/.local/share/mise`, `~/.local/bin` | overlay: host content visible, writes land in a per-binary upper layer under `~/.local/state/box/overlays/` |
 | `~/.claude` (claude only)        | temporary overlay: host content visible, writes discarded on exit; `projects/` and `.credentials.json` read-write |
 | `~/.claude.json` (claude only)   | private copy of the host file                        |
 | network                          | own empty namespace; HTTP(S) only through an allowlisting proxy on the host (`allow_hosts`) |
@@ -76,7 +76,7 @@ ro_binds = ["/bin", "/sbin", "/lib", "?/lib32", "/lib64", "/usr", "/etc", "?/opt
 rw_binds = ["$PWD"]
 tmpfs    = ["$HOME", "/var/tmp"]
 private_tmp = true
-overlays = [{ path = "~/.local/share/mise", persist = true }]
+overlays = [{ path = "~/.local/share/mise", persist = true }, { path = "?~/.local/bin", persist = true }]
 network  = false
 proxy    = true
 allow_hosts = ["github.com", "*.github.com", "registry.npmjs.org"]

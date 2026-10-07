@@ -23,7 +23,8 @@ func TestDefaultTOMLParses(t *testing.T) {
 			t.Errorf("pass_env = %v, missing %q", p.PassEnv, want)
 		}
 	}
-	if len(p.Overlays) != 1 || p.Overlays[0].Path != "~/.local/share/mise" || !p.Overlays[0].Persist {
+	if len(p.Overlays) != 2 || p.Overlays[0].Path != "~/.local/share/mise" || !p.Overlays[0].Persist ||
+		p.Overlays[1].Path != "?~/.local/bin" || !p.Overlays[1].Persist {
 		t.Errorf("unexpected default overlays: %+v", p.Overlays)
 	}
 	if p.LogDir != DefaultLogDir {
@@ -144,8 +145,8 @@ func TestDefaultTOMLClaude(t *testing.T) {
 	if contains(p.RWBinds, "?~/.claude") || contains(p.RWBinds, "?~/.claude.json") {
 		t.Errorf("~/.claude must be an overlay and ~/.claude.json a synced copy, not rw_binds %v", p.RWBinds)
 	}
-	if len(p.Overlays) != 2 || p.Overlays[1].Path != "?~/.claude" || p.Overlays[1].Persist {
-		t.Errorf("want a temporary ~/.claude overlay after the default one, got %+v", p.Overlays)
+	if len(p.Overlays) != 3 || p.Overlays[2].Path != "?~/.claude" || p.Overlays[2].Persist {
+		t.Errorf("want a temporary ~/.claude overlay after the default ones, got %+v", p.Overlays)
 	}
 	if got, want := p.SyncFiles, []string{"?~/.claude.json"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("sync_files = %v, want %v", got, want)
