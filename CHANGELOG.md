@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `box top` watches the running sandboxes in a full-screen terminal view
+  that refreshes every second (`-i` sets the interval): one row per sandbox
+  with its process count, CPU usage rate, resident memory (also as a share
+  of physical memory), uptime, directory and command. Keys sort by CPU,
+  memory, processes, uptime or name, reverse the order, change the interval
+  and quit.
+
 - `box info` prints the version, platform, isolation mechanism (`bwrap` or
   `sandbox-exec`, with path and version), config and state locations and the
   number of running sandboxes per binary.
