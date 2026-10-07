@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -213,7 +214,20 @@ func cmdInit(argv []string) error {
 			return err
 		}
 	}
-	if err := config.WriteDefault(path); err != nil {
+	err := config.WriteDefault(path)
+	if errors.Is(err, config.ErrExists) {
+		fmt.Fprintf(os.Stderr, "%s already exists; diff against the built-in defaults:\n", path)
+		differs, derr := config.DiffDefault(path, os.Stdout)
+		if derr != nil {
+			return fmt.Errorf("%w (unable to diff: %v)", err, derr)
+		}
+		if !differs {
+			fmt.Fprintln(os.Stderr, "(no differences)")
+			return nil
+		}
+		return err
+	}
+	if err != nil {
 		return err
 	}
 	fmt.Println("wrote", path)
