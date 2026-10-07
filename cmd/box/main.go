@@ -35,6 +35,7 @@ Usage:
   box config [-c FILE] [<command>]                   print the effective profile
   box init [-c FILE]                                 write the default config file
   box clean [-c FILE] [<command>]                    delete overlay layers, stale /tmp dirs and logs
+  box df [-a] [-c FILE] [<command>]                  show disk usage of overlay layers, /tmp dirs and logs
   box ps [<command>]                                 list running sandboxes
   box top [-i DURATION] [<command>]                  watch running sandboxes in the terminal
   box info [-c FILE]                                 print version, isolation mechanism, config path, log dir
@@ -45,6 +46,7 @@ Flags:
   -v, --verbose   print the sandbox command before running it
   -c, --config    configuration file (default $BOX_CONFIG or ~/.config/box/box.toml)
   -i, --interval  refresh interval of box top (default 1s)
+  -a, --all       list every overlay layer, /tmp dir and log in box df
 
 Keys in box top:
   q quit   c/m/p/t/n sort by cpu, memory, processes, uptime, name   r reverse   +/- interval
@@ -67,6 +69,8 @@ func main() {
 		err = cmdInit(os.Args[2:])
 	case "clean":
 		err = cmdClean(os.Args[2:])
+	case "df":
+		err = cmdDf(os.Args[2:])
 	case "ps":
 		err = cmdPs(os.Args[2:])
 	case "top":
