@@ -215,12 +215,25 @@ seatbelt_rules = ["(allow b)"]
 
 func TestWriteDefaultRefusesExisting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "box.toml")
-	if err := WriteDefault(path); err != nil {
+	if err := WriteDefault(path, false); err != nil {
 		t.Fatal(err)
 	}
-	err := WriteDefault(path)
+	if err := os.WriteFile(path, []byte("[default]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := WriteDefault(path, false)
 	if !errors.Is(err, ErrExists) {
 		t.Fatalf("expected ErrExists, got %v", err)
+	}
+	if err := WriteDefault(path, true); err != nil {
+		t.Fatalf("force overwrite failed: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != DefaultTOML {
+		t.Fatal("force overwrite did not restore the defaults")
 	}
 }
 

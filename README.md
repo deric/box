@@ -69,7 +69,7 @@ command line.
 
 `box init` writes a commented default file. If the file already exists it is
 left untouched and a unified diff against the built-in defaults is printed
-instead. The `[default]` section applies to
+instead; pass `-f` to overwrite it. The `[default]` section applies to
 every binary; `[binaries.<name>]` (the binary's base name) overrides it. List
 values are **appended** to the defaults, scalar values **replace** them, and
 `drop_binds` removes inherited entries from any mount list.

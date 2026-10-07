@@ -34,7 +34,7 @@ Usage:
   box run [-n] [-v] [-c FILE] <command> [args...]   run command in a sandbox
   box show [-c FILE] <command> [args...]             print the sandbox command line
   box config [-c FILE] [<command>]                   print the effective profile
-  box init [-c FILE]                                 write the default config file
+  box init [-f] [-c FILE]                            write the default config file
   box clean [-c FILE] [<command>]                    delete overlay layers, stale /tmp dirs and logs
   box df [-a] [-c FILE] [<command>]                  show disk usage of overlay layers, /tmp dirs and logs
   box ps [<command>]                                 list running sandboxes
@@ -48,6 +48,7 @@ Flags:
   -c, --config    configuration file (default $BOX_CONFIG or ~/.config/box/box.toml)
   -i, --interval  refresh interval of box top (default 1s)
   -a, --all       list every overlay layer, /tmp dir and log in box df
+  -f, --force     overwrite an existing config file in box init
 
 Keys in box top:
   q quit   c/m/p/t/n sort by cpu, memory, processes, uptime, name   r reverse   +/- interval
@@ -204,6 +205,9 @@ func cmdConfig(argv []string) error {
 func cmdInit(argv []string) error {
 	var c common
 	fs := newFlagSet("init", &c)
+	var force bool
+	fs.BoolVar(&force, "f", false, "overwrite existing config file")
+	fs.BoolVar(&force, "force", false, "overwrite existing config file")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
@@ -214,9 +218,9 @@ func cmdInit(argv []string) error {
 			return err
 		}
 	}
-	err := config.WriteDefault(path)
+	err := config.WriteDefault(path, force)
 	if errors.Is(err, config.ErrExists) {
-		fmt.Fprintf(os.Stderr, "%s already exists; diff against the built-in defaults:\n", path)
+		fmt.Fprintf(os.Stderr, "%s already exists; diff against the built-in defaults (use -f to overwrite):\n", path)
 		differs, derr := config.DiffDefault(path, os.Stdout)
 		if derr != nil {
 			return fmt.Errorf("%w (unable to diff: %v)", err, derr)

@@ -216,10 +216,10 @@ func Load(path string) (*Config, bool, error) {
 // ErrExists is returned by WriteDefault when the target file already exists.
 var ErrExists = errors.New("config file already exists")
 
-// WriteDefault writes DefaultTOML to path, creating parent directories. It
-// refuses to overwrite an existing file and returns ErrExists in that case.
-func WriteDefault(path string) error {
-	if _, err := os.Stat(path); err == nil {
+// WriteDefault writes DefaultTOML to path, creating parent directories. Unless
+// force is set it refuses to overwrite an existing file and returns ErrExists.
+func WriteDefault(path string, force bool) error {
+	if _, err := os.Stat(path); err == nil && !force {
 		return fmt.Errorf("%s: %w", path, ErrExists)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
