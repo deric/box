@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"box/internal/procs"
+	"github.com/deric/box/internal/procs"
 )
 
 // Sort orders of the top view, chosen with the keys listed in topKeys.

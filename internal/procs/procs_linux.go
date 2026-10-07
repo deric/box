@@ -1,6 +1,6 @@
 package procs
 
-import "box/internal/sandbox"
+import "github.com/deric/box/internal/sandbox"
 
 // Sandboxes lists the running box sandboxes.
 func Sandboxes() ([]Sandbox, error) {

@@ -181,7 +181,13 @@ release and is what other agent sandboxes build on.
 - `bwrap` ≥ 0.8 for `disable_userns`, ≥ 0.10 for overlay mounts (uses
   `--overlay-src`, `--overlay`, `--tmp-overlay`).
   Overlays need a non-setuid `bwrap` and a kernel with unprivileged overlayfs (≥ 5.11).
-- Go 1.27 to build: `go build -o box ./cmd/box`
+- Go 1.24 or newer to build: `go build -o box ./cmd/box`
+
+### Install with Go
+
+```
+go install github.com/deric/box/cmd/box@latest
+```
 
 ### Debian / Ubuntu
 

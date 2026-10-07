@@ -16,7 +16,7 @@ import (
 	"strings"
 	"syscall"
 
-	"box/internal/config"
+	"github.com/deric/box/internal/config"
 )
 
 // Options carries the per-invocation inputs that are not part of the profile.

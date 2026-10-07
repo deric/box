@@ -17,9 +17,9 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"box/internal/config"
-	"box/internal/procs"
-	"box/internal/sandbox"
+	"github.com/deric/box/internal/config"
+	"github.com/deric/box/internal/procs"
+	"github.com/deric/box/internal/sandbox"
 )
 
 // The _proxy and _forward commands are started by box itself (see

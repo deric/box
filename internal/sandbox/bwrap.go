@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"box/internal/config"
+	"github.com/deric/box/internal/config"
 )
 
 // buildBwrap computes the bwrap command line; exe is the bwrap executable.

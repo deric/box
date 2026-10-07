@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"testing"
 
-	"box/internal/config"
+	"github.com/deric/box/internal/config"
 )
 
 // fixture builds a fake host tree: home with a project dir, a tool dir to

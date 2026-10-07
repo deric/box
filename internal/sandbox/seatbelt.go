@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"box/internal/config"
+	"github.com/deric/box/internal/config"
 )
 
 // seatbeltBase opens every macOS profile. Everything not allowed is denied;

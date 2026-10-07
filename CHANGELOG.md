@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The minimum Go version to build is 1.24 (was 1.27); `golang.org/x/sys` is
+  pinned to v0.41.0, the newest release that still supports Go 1.24.
+
 - The proxy log is named `/tmp/box/<name>-<pid>-<dir>.log`, with `<dir>` the
   working directory minus its leading slash and the other slashes replaced by
   dashes, so logs of one binary started from different directories can be
@@ -34,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2026-10-06
 
 ### Fixed
+
+- `go install github.com/deric/box/cmd/box@latest` failed because `go.mod`
+  declared the module path as `box`; it is now `github.com/deric/box`.
 
 - Release workflow failed to resolve `dagger/dagger-for-github@v8` because no
   floating `v8` tag exists; the action is now pinned to `v8.4.1`.

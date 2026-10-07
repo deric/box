@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"box/internal/proxy"
-	"box/internal/sandbox"
+	"github.com/deric/box/internal/proxy"
+	"github.com/deric/box/internal/sandbox"
 )
 
 type stringList []string

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"box/internal/config"
+	"github.com/deric/box/internal/config"
 )
 
 // realTempDir returns a temporary directory with symlinks resolved (on macOS

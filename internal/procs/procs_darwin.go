@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"box/internal/sandbox"
+	"github.com/deric/box/internal/sandbox"
 )
 
 // Sandboxes lists the running box sandboxes. sandbox-exec replaces itself

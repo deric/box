@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"box/internal/procs"
+	"github.com/deric/box/internal/procs"
 )
 
 func TestTopUpdateRates(t *testing.T) {
