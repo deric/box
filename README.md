@@ -20,7 +20,7 @@ box clean claude                # drop claude's overlay layers and stale private
 box df                          # disk usage per binary: overlay layers, private /tmp dirs, logs
 box df -a claude                # the same listing every layer, /tmp dir and log of claude
 box ps                          # list running sandboxes with process count, CPU, memory
-box top                         # the same as a live view that refreshes every second
+box top                         # the same as a live view that refreshes every second, plus what the proxy denied
 box info                        # print version, isolation mechanism, config path, log dir, running sandboxes
 ```
 
@@ -58,8 +58,10 @@ to hosts on `allow_hosts`: an entry is an exact name, `*.suffix` for anything
 under a domain, or `*`. Everything else gets `403 Forbidden` and a line in
 `<log_dir>/<name>-<pid>-<dir>.log` (`log_dir` defaults to `/tmp/box`), where
 `<dir>` is the working directory without its leading slash and with the other
-slashes replaced by dashes. `box info` shows the log directory in use and
-`box clean` removes logs of sandboxes that have exited. Names that match only through a wildcard may not
+slashes replaced by dashes. `box info` shows the log directory in use,
+`box top` shows the denied requests of the running sandboxes grouped by
+target host in its lower pane, and `box clean` removes logs of sandboxes that
+have exited. Names that match only through a wildcard may not
 resolve to loopback or link-local addresses, so a `*` entry does not reach
 services on the host. Programs that ignore the proxy variables have no
 network at all. `box show` prints the proxy command along with the `bwrap`
