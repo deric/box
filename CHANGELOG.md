@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The built-in `claude` profile mounts the directories Claude Code loads
+  skills from: `~/.claude/skills` (personal and claude.ai-synced skills),
+  `~/.claude/plugins` (installed plugins and marketplaces) and the
+  cross-agent `~/.agents/skills` are persistent overlays on Linux, so the
+  host's skills are visible inside and skills or plugins installed in the
+  sandbox survive across runs in claude's layer under `~/.local/state/box`
+  without touching the host directories. On macOS `~/.agents/skills` is
+  readable; `~/.claude` was already read-write there.
+
 - `box top` is split in two: below the sandboxes it lists the connections
   the proxy denied them, grouped by target host with the number of
   attempts, the time of the last one and the sandboxes that made them, most

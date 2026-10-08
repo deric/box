@@ -35,6 +35,7 @@ box info                        # print version, isolation mechanism, config pat
 | `$HOME`                          | empty tmpfs; only listed paths underneath are visible |
 | `~/.local/share/mise`, `~/.local/bin` | overlay: host content visible, writes land in a per-binary upper layer under `~/.local/state/box/overlays/` |
 | `~/.claude` (claude only)        | temporary overlay: host content visible, writes discarded on exit; `projects/` and `.credentials.json` read-write |
+| `~/.claude/skills`, `~/.claude/plugins`, `~/.agents/skills` (claude only) | persistent overlays: the host's skills and plugins are visible, ones installed inside land in the per-binary upper layer |
 | `~/.claude.json` (claude only)   | private copy of the host file                        |
 | network                          | own empty namespace; HTTP(S) only through an allowlisting proxy on the host (`allow_hosts`) |
 | `/proc`, `/dev`                  | fresh, minimal                                       |
@@ -94,7 +95,12 @@ pass_env  = ["HOME", "USER", "PATH", "SHELL", "TERM", "LANG", "LC_*"]
 env       = { BOX_SANDBOX = "1" }
 
 [binaries.claude]
-overlays   = [{ path = "?~/.claude", persist = false }]
+overlays   = [
+  { path = "?~/.claude", persist = false },
+  { path = "?~/.claude/skills", persist = true },
+  { path = "?~/.claude/plugins", persist = true },
+  { path = "?~/.agents/skills", persist = true },
+]
 rw_binds   = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
 sync_files = ["?~/.claude.json"]
 pass_env   = ["ANTHROPIC_*", "CLAUDE_*"]
@@ -287,6 +293,14 @@ the same build in CI and attaches the artifacts to a GitHub release.
   `~/.claude`: `~/.claude.json`, `~/.claude/projects` (sessions, memory) and
   `~/.claude/.credentials.json` (tokens are refreshed in place) reach the
   host, while other edits under `~/.claude` are lost when the sandbox exits.
+  Skills are the exception: `~/.claude/skills` (personal skills and those
+  synced from claude.ai), `~/.claude/plugins` (installed plugins and
+  marketplaces) and the cross-agent `~/.agents/skills` are persistent
+  overlays, so the host's skills are visible and a skill or plugin installed
+  inside the sandbox stays in claude's layer under `~/.local/state/box`
+  across runs, without being written to the host directories; `box clean
+  claude` drops it. Project skills in `.claude/skills` live under `$PWD` and
+  are read-write like the rest of it.
   The write-back happens once, on exit: a sandbox that is killed outright
   leaves the host file untouched, and when two sandboxes edit the same file
   the last one to exit wins (a warning is printed when the host file changed

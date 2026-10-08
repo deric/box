@@ -57,9 +57,11 @@ extra_args = []
 # e.g. '(allow mach-lookup (global-name "com.apple.pasteboard.1"))'.
 seatbelt_rules = []
 
-# Claude Code keeps its settings, sessions and memory in ~/.claude, its global
-# state in ~/.claude.json, and its login credentials in the login keychain.
+# Claude Code keeps its settings, sessions, memory, skills and plugins in
+# ~/.claude, its global state in ~/.claude.json, and its login credentials in
+# the login keychain. Skills in the cross-agent ~/.agents/skills are readable.
 [binaries.claude]
+ro_binds = ["?~/.agents/skills"]
 rw_binds = ["?~/.claude", "?~/.claude.json", "?~/Library/Keychains"]
 
 # Example per-binary sections:
