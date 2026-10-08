@@ -66,12 +66,12 @@ log_dir = "/tmp/box"
 allow_hosts = [
   "api.dagger.cloud",
   "crates.io", "*.crates.io", "dl.google.com", "*.debian.org",
-  "files.pythonhosted.org",
+  "files.pythonhosted.org", "forge.puppet.com", "forgeapi.puppet.com",
   "icinga.com", "index.rubygems.org",
   "github.com", "*.github.com", "*.githubusercontent.com", "gitlab.com",
-  "go.dev", "proxy.golang.org", "pypi.org",
+  "go.dev", "*.golang.org", "pypi.org",
   "registry.npmjs.org", "rubygems.org", "registry.dagger.io",
-  "sum.golang.org", "storage.googleapis.com",
+  "storage.googleapis.com",
 ]
 
 # Hostname inside the sandbox (empty keeps the host name).
