@@ -38,7 +38,7 @@ Usage:
   box clean [-c FILE] [<command>]                    delete overlay layers, stale /tmp dirs and logs
   box df [-a] [-c FILE] [<command>]                  show disk usage of overlay layers, /tmp dirs and logs
   box ps [<command>]                                 list running sandboxes
-  box top [-i DURATION] [<command>]                  watch running sandboxes in the terminal
+  box top [-i DURATION] [-c FILE] [<command>]        watch running sandboxes and denied connections
   box info [-c FILE]                                 print version, isolation mechanism, config path, log dir
   box version
 

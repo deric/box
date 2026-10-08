@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `box top` is split in two: below the sandboxes it lists the connections
+  the proxy denied them, grouped by target host with the number of
+  attempts, the time of the last one and the sandboxes that made them, most
+  denied first. The summary line carries the total. The proxy logs are read
+  from the `log_dir` of the configuration, so `box top` takes `-c` like the
+  other commands.
+
 [Unreleased]: https://github.com/deric/box/compare/v0.2.0...HEAD
 
 ## [0.2.0] - 2026-10-07

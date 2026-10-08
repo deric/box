@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -46,8 +45,9 @@ type topSample struct {
 	at      time.Time
 }
 
-// topState holds everything the top view renders and the previous sample
-// it computes rates from.
+// topState holds everything the top view renders: the sandboxes in the
+// upper pane with the previous sample their rates are computed from, and
+// the requests the proxy denied them in the lower pane.
 type topState struct {
 	rows     []topRow
 	prev     map[int]topSample
@@ -58,14 +58,17 @@ type topState struct {
 	filter   string
 	now      time.Time
 	err      error
+	denied   deniedLogs
+	logDirs  []string // where the proxy logs of the rows are looked for
 }
 
-func newTopState(interval time.Duration, filter string) *topState {
+func newTopState(interval time.Duration, filter string, logDirs []string) *topState {
 	return &topState{
 		prev:     map[int]topSample{},
 		interval: interval,
 		totalMem: procs.TotalMemory(),
 		filter:   filter,
+		logDirs:  logDirs,
 	}
 }
 
@@ -94,6 +97,15 @@ func (s *topState) update(list []procs.Sandbox, err error, now time.Time) {
 	}
 	s.prev = next
 	s.sortRows()
+}
+
+// updateDenied reads on in the proxy logs of the listed sandboxes.
+func (s *topState) updateDenied() {
+	list := make([]procs.Sandbox, len(s.rows))
+	for i, r := range s.rows {
+		list[i] = r.Sandbox
+	}
+	s.denied.update(deniedFiles(s.logDirs, list))
 }
 
 // cpuPercent is CPU time per elapsed wall-clock time as a percentage of one
@@ -180,27 +192,34 @@ type topColumn struct {
 	sorts bool
 }
 
+// topHeader marks a header line of the view and the cell range within it
+// that is emphasized (the sort column of the sandbox table).
+type topHeader struct {
+	line, from, to int
+}
+
 // lines renders the view as exactly height plain-text lines of at most width
-// cells: a summary, the column header, the rows, padding and the key help.
-// The index of the header line is returned so the caller can highlight it,
-// along with the cell range of the sort column within it.
-func (s *topState) lines(width, height int) (lines []string, header int, sortFrom, sortTo int) {
+// cells, split into two panes: the sandboxes (a summary, the column header
+// and the rows) above, the requests the proxy denied them grouped by target
+// (a column header and the rows) below, and the key help on the last line.
+// Each pane gets the lines it needs up to half the screen, or more when the
+// other needs less. The header lines are returned for highlighting.
+func (s *topState) lines(width, height int) (lines []string, headers []topHeader) {
 	if width <= 0 {
 		width = 80
 	}
 	if height <= 0 {
 		height = 24
 	}
-	body := max(height-3, 1)
-	shown := min(len(s.rows), body)
+	denied := s.denied.rows()
+	topH, botH := splitHeight(height-1, 2+max(len(s.rows), 1), 1+max(len(denied), 1))
 
+	shown := min(len(s.rows), max(topH-2, 0))
 	lines = append(lines, clip(s.summary(shown), width))
 	cols := s.columns()
 	hdr, from, to := s.header(cols)
-	header = len(lines)
+	headers = append(headers, topHeader{len(lines), min(from, width), min(to, width)})
 	lines = append(lines, clip(hdr, width))
-	sortFrom, sortTo = min(from, width), min(to, width)
-
 	switch {
 	case s.err != nil:
 		lines = append(lines, clip("error: "+s.err.Error(), width))
@@ -215,13 +234,54 @@ func (s *topState) lines(width, height int) (lines []string, header int, sortFro
 			lines = append(lines, clip(s.row(cols, r, width), width))
 		}
 	}
-	for len(lines) < height-1 {
+	for len(lines) < topH {
 		lines = append(lines, "")
+	}
+	lines = lines[:min(len(lines), topH)]
+
+	if botH > 0 {
+		dcols := s.deniedColumns(denied)
+		headers = append(headers, topHeader{line: len(lines)})
+		lines = append(lines, clip(s.deniedHeader(dcols), width))
+		shown := min(len(denied), botH-1)
+		if shown < len(denied) {
+			shown = max(botH-2, 0) // leave a line for the count of the rest
+		}
+		switch {
+		case s.denied.err != nil:
+			lines = append(lines, clip("error: "+s.denied.err.Error(), width))
+		case len(denied) == 0:
+			lines = append(lines, "no denied connections")
+		default:
+			for _, d := range denied[:shown] {
+				lines = append(lines, clip(s.deniedRow(dcols, d), width))
+			}
+			if shown < len(denied) {
+				lines = append(lines, clip(fmt.Sprintf("… %d more targets", len(denied)-shown), width))
+			}
+		}
+		for len(lines) < topH+botH {
+			lines = append(lines, "")
+		}
+		lines = lines[:min(len(lines), topH+botH)]
 	}
 	if len(lines) < height {
 		lines = append(lines, clip(topKeys, width))
 	}
-	return lines[:min(len(lines), height)], header, sortFrom, sortTo
+	return lines, headers
+}
+
+// splitHeight divides avail lines between the two panes that would like
+// topNeed and botNeed lines: the upper one gets what it needs up to half,
+// or more when the lower one does not need its half, and at least three
+// lines (summary, header, one row); the lower one gets the rest.
+func splitHeight(avail, topNeed, botNeed int) (topH, botH int) {
+	if avail <= 0 {
+		return 0, 0
+	}
+	topH = min(topNeed, max(avail/2, avail-botNeed))
+	topH = max(topH, min(3, avail))
+	return topH, avail - topH
 }
 
 // summary is the first line: the time and totals over the listed sandboxes.
@@ -247,8 +307,42 @@ func (s *topState) summary(shown int) string {
 	if s.totalMem > 0 {
 		fmt.Fprintf(b, " (%.1f%%)", 100*float64(rss)/float64(s.totalMem))
 	}
-	fmt.Fprintf(b, "  interval: %s", s.interval)
+	fmt.Fprintf(b, "  denied: %d  interval: %s", s.denied.total(), s.interval)
 	return b.String()
+}
+
+// deniedColumns describes the lower pane: the number of denied requests,
+// when the last one happened, which sandboxes made them and the target host
+// they were for, which takes the remaining width.
+func (s *topState) deniedColumns(rows []denial) []topColumn {
+	nameW := 7
+	for _, d := range rows {
+		nameW = max(nameW, utf8.RuneCountInString(d.sandboxNames()))
+	}
+	return []topColumn{
+		{name: "DENIED", width: 6, right: true},
+		{name: "LAST", width: 8},
+		{name: "SANDBOX", width: min(nameW, 24)},
+		{name: "TARGET"},
+	}
+}
+
+func (s *topState) deniedHeader(cols []topColumn) string {
+	cells := make([]string, len(cols))
+	for i, c := range cols {
+		cells[i] = c.name
+	}
+	line, _ := joinCells(cols, cells)
+	return line
+}
+
+func (s *topState) deniedRow(cols []topColumn, d denial) string {
+	last := ""
+	if !d.last.IsZero() {
+		last = d.last.Format("15:04:05")
+	}
+	line, _ := joinCells(cols, []string{fmt.Sprint(d.count), last, d.sandboxNames(), d.target})
+	return line
 }
 
 func (s *topState) columns() []topColumn {
@@ -368,26 +462,33 @@ func clipLeft(s string, n int) string {
 }
 
 // draw writes one frame: the cursor goes home, every line is written and
-// cleared to its end, the header line in reverse video with the sort column
+// cleared to its end, the header lines in reverse video with the sort column
 // in bold, the key help dimmed, and whatever is left below is cleared. No
 // newline follows the last line so the screen never scrolls.
 func (s *topState) draw(w *bufio.Writer, width, height int) error {
-	lines, header, from, to := s.lines(width, height)
+	lines, headers := s.lines(width, height)
+	hdr := map[int]topHeader{}
+	for _, h := range headers {
+		hdr[h.line] = h
+	}
 	b := new(strings.Builder)
 	b.WriteString("\x1b[H")
 	for i, line := range lines {
 		if i > 0 {
 			b.WriteString("\r\n")
 		}
+		h, isHeader := hdr[i]
 		switch {
-		case i == header:
+		case isHeader:
 			r := []rune(line)
 			b.WriteString("\x1b[7m")
-			b.WriteString(string(r[:from]))
-			b.WriteString("\x1b[27m\x1b[1m")
-			b.WriteString(string(r[from:to]))
-			b.WriteString("\x1b[22m\x1b[7m")
-			b.WriteString(string(r[to:]))
+			b.WriteString(string(r[:h.from]))
+			if h.to > h.from {
+				b.WriteString("\x1b[27m\x1b[1m")
+				b.WriteString(string(r[h.from:h.to]))
+				b.WriteString("\x1b[22m\x1b[7m")
+			}
+			b.WriteString(string(r[h.to:]))
 			b.WriteString("\x1b[K\x1b[0m")
 		case i == len(lines)-1 && line == topKeys:
 			b.WriteString("\x1b[2m" + line + "\x1b[K\x1b[0m")
@@ -404,13 +505,14 @@ func (s *topState) draw(w *bufio.Writer, width, height int) error {
 
 // cmdTop shows the running sandboxes in a full-screen view that refreshes
 // every interval, like top(1): one row per sandbox with its process count,
-// CPU usage rate, resident memory and uptime.
+// CPU usage rate, resident memory and uptime, and below them the requests
+// the proxy denied those sandboxes, grouped by target host and counted.
 func cmdTop(argv []string) error {
-	fs := flag.NewFlagSet("top", flag.ExitOnError)
+	var c common
+	fs := newFlagSet("top", &c)
 	var interval time.Duration
 	fs.DurationVar(&interval, "i", time.Second, "refresh interval")
 	fs.DurationVar(&interval, "interval", time.Second, "refresh interval")
-	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
@@ -420,6 +522,14 @@ func cmdTop(argv []string) error {
 	var filter string
 	if fs.NArg() > 0 {
 		filter = filepath.Base(fs.Arg(0))
+	}
+	cfg, err := c.load()
+	if err != nil {
+		return err
+	}
+	dirs, err := logDirs(cfg)
+	if err != nil {
+		return err
 	}
 	in, out := int(os.Stdin.Fd()), int(os.Stdout.Fd())
 	if !isTerminal(in) || !isTerminal(out) {
@@ -462,7 +572,7 @@ func cmdTop(argv []string) error {
 	defer signal.Stop(sigs)
 	defer signal.Stop(winch)
 
-	st := newTopState(interval, filter)
+	st := newTopState(interval, filter, dirs)
 	draw := func() error {
 		width, height, err := termSize(out)
 		if err != nil {
@@ -473,6 +583,7 @@ func cmdTop(argv []string) error {
 	refresh := func() error {
 		list, err := procs.Sandboxes()
 		st.update(list, err, time.Now())
+		st.updateDenied()
 		return draw()
 	}
 	if err := refresh(); err != nil {
