@@ -120,8 +120,21 @@ extra_args = []
 # discarded on exit. ~/.claude.json is saved by writing a temporary file and
 # renaming it over the original, which a bind mount of the file alone would
 # refuse, so it is a copy that is written back to the host when claude exits.
+#
+# Skills come from ~/.claude/skills (personal skills and the ones synced from
+# claude.ai), ~/.claude/plugins (installed plugins and marketplaces), the
+# cross-agent ~/.agents/skills and the project's .claude/skills under $PWD.
+# The three home directories are persistent overlays: the host's skills are
+# visible, and skills or plugins installed inside the sandbox land in the
+# per-binary layer under ~/.local/state/box/overlays, so they survive across
+# runs without touching the host directories (`box clean claude` drops them).
 [binaries.claude]
-overlays = [{ path = "?~/.claude", persist = false }]
+overlays = [
+  { path = "?~/.claude", persist = false },
+  { path = "?~/.claude/skills", persist = true },
+  { path = "?~/.claude/plugins", persist = true },
+  { path = "?~/.agents/skills", persist = true },
+]
 rw_binds = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
 sync_files = ["?~/.claude.json"]
 pass_env = ["ANTHROPIC_*", "CLAUDE_*"]

@@ -151,8 +151,19 @@ func TestDefaultTOMLClaude(t *testing.T) {
 	if contains(p.RWBinds, "?~/.claude") || contains(p.RWBinds, "?~/.claude.json") {
 		t.Errorf("~/.claude must be an overlay and ~/.claude.json a synced copy, not rw_binds %v", p.RWBinds)
 	}
-	if len(p.Overlays) != 3 || p.Overlays[2].Path != "?~/.claude" || p.Overlays[2].Persist {
+	if len(p.Overlays) != 6 || p.Overlays[2].Path != "?~/.claude" || p.Overlays[2].Persist {
 		t.Errorf("want a temporary ~/.claude overlay after the default ones, got %+v", p.Overlays)
+	}
+	for i, want := range []string{"?~/.claude/skills", "?~/.claude/plugins", "?~/.agents/skills"} {
+		if len(p.Overlays) <= 3+i {
+			break
+		}
+		if o := p.Overlays[3+i]; o.Path != want || !o.Persist {
+			t.Errorf("overlays[%d] = %+v, want persistent %s", 3+i, o, want)
+		}
+	}
+	if contains(p.RWBinds, "?~/.claude/skills") || contains(p.ROBinds, "?~/.claude/skills") {
+		t.Errorf("~/.claude/skills must be a persistent overlay, not a bind: ro %v rw %v", p.ROBinds, p.RWBinds)
 	}
 	if got, want := p.SyncFiles, []string{"?~/.claude.json"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("sync_files = %v, want %v", got, want)
@@ -192,6 +203,9 @@ func TestDefaultTOMLDarwin(t *testing.T) {
 		if !contains(p.RWBinds, want) {
 			t.Errorf("rw_binds = %v, missing %q", p.RWBinds, want)
 		}
+	}
+	if !contains(p.ROBinds, "?~/.agents/skills") {
+		t.Errorf("ro_binds = %v, missing ~/.agents/skills", p.ROBinds)
 	}
 	if defaultFor("darwin") != DefaultDarwinTOML || defaultFor("linux") != DefaultLinuxTOML {
 		t.Error("defaultFor picks the wrong file")

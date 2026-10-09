@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -125,6 +126,56 @@ func TestBuildTmpOverlayAndNoNetwork(t *testing.T) {
 	}
 	if !strings.Contains(cmd, "--overlay-src "+tools+" --tmp-overlay "+tools) {
 		t.Errorf("expected tmp overlay in %s", cmd)
+	}
+}
+
+// A persistent overlay inside a temporary one (the claude profile's
+// ~/.claude/skills under ~/.claude) must be mounted after its parent so the
+// tmp overlay does not hide it, and must get its own layer directories.
+func TestBuildNestedOverlays(t *testing.T) {
+	home, cwd, _, bin := fixture(t)
+	state := filepath.Join(filepath.Dir(home), "state")
+	parent := filepath.Join(home, ".claude")
+	child := filepath.Join(parent, "skills")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prof := config.Profile{
+		Tmpfs: []string{"$HOME"},
+		Overlays: []config.Overlay{
+			{Path: "?~/.claude/skills", Persist: true}, // listed first on purpose
+			{Path: "?~/.claude", Persist: false},
+			{Path: "?~/.agents/skills", Persist: true}, // missing: skipped silently
+		},
+	}
+	plan, err := buildBwrap(prof, Options{
+		Binary: "tool", Cwd: cwd, Home: home, StateDir: state,
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := strings.Join(plan.Args, " ")
+	layer := filepath.Join(state, "overlays", "tool", layerName(child))
+	tmp := "--overlay-src " + parent + " --tmp-overlay " + parent
+	persist := "--overlay-src " + child + " --overlay " + filepath.Join(layer, "upper") + " " + filepath.Join(layer, "work") + " " + child
+	ti, pi := strings.Index(cmd, tmp), strings.Index(cmd, persist)
+	if ti < 0 || pi < 0 {
+		t.Fatalf("expected both overlays in %s", cmd)
+	}
+	if hi := strings.Index(cmd, "--tmpfs "+home); hi >= ti || ti >= pi {
+		t.Errorf("want $HOME tmpfs, then %s, then %s in %s", parent, child, cmd)
+	}
+	if strings.Contains(cmd, ".agents") {
+		t.Errorf("missing optional overlay should be skipped: %s", cmd)
+	}
+	if len(plan.Warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", plan.Warnings)
+	}
+	for _, d := range []string{filepath.Join(layer, "upper"), filepath.Join(layer, "work")} {
+		if !slices.Contains(plan.Dirs, d) {
+			t.Errorf("plan.Dirs = %v, missing %s", plan.Dirs, d)
+		}
 	}
 }
 
