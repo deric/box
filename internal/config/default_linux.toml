@@ -64,12 +64,16 @@ network = false
 proxy = true
 log_dir = "/tmp/box"
 allow_hosts = [
-  "api.dagger.cloud",
-  "crates.io", "*.crates.io", "dl.google.com", "*.debian.org",
+  "api.dagger.cloud", "apt.voxpupuli.org",
+  "crates.io", "*.crates.io",
+  "*.debian.org", "dl.google.com",
   "files.pythonhosted.org", "forge.puppet.com", "forgeapi.puppet.com",
   "icinga.com", "index.rubygems.org",
   "github.com", "*.github.com", "*.githubusercontent.com", "gitlab.com",
   "go.dev", "*.golang.org", "pypi.org",
+  "orca.security",
+  "hub.docker.io",
+  "nginx.org","nvd.nist.gov",
   "registry.npmjs.org", "rubygems.org", "registry.dagger.io",
   "storage.googleapis.com",
 ]
@@ -139,7 +143,7 @@ rw_binds = ["?~/.claude/projects", "?~/.claude/.credentials.json"]
 sync_files = ["?~/.claude.json"]
 pass_env = ["ANTHROPIC_*", "CLAUDE_*"]
 allow_hosts = [
-  "*.anthropic.com", "claude.ai", "*.claude.ai", "*.claude.com", "*.sentry.io",
+  "*.anthropic.com", "claude.ai", "*.claude.ai", "*.claude.com",
 ]
 
 # Example per-binary sections:
