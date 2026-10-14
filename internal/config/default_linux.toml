@@ -146,6 +146,11 @@ allow_hosts = [
   "*.anthropic.com", "claude.ai", "*.claude.ai", "*.claude.com",
 ]
 
+[binaries.bash]
+# With new_session = false, a sandboxed process shares the host terminal's session
+# and can use the TIOCSTI ioctl to inject keystrokes into the host shell, escaping the sandbox.
+new_session = false
+
 # Example per-binary sections:
 #
 # [binaries.trusted-tool]
