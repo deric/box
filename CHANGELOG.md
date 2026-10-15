@@ -13,8 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent can build and run containers from inside: user namespaces stay
   enabled, `/sys` is mounted read-only, a per-binary directory
   `~/.local/state/box/podman/<name>` with the image store is bound in, a
-  private tmpfs serves as `XDG_RUNTIME_DIR`, an empty file is bound over
-  `/etc/subuid` and `/etc/subgid` so podman uses its single-UID mapping,
+  private tmpfs serves as `XDG_RUNTIME_DIR`, the `box _forward` wrapper
+  starts podman's pause process in a single-UID user namespace of its own
+  (so podman joins it quietly instead of failing to map `/etc/subuid`
+  ranges, which `bwrap` cannot provide, and logging an error about it),
+  an empty file is bound over `/etc/subuid` and `/etc/subgid` so podman
+  falls back to its single-UID mapping without that pause process,
   and a `containers.conf` and `storage.conf` written into that directory
   make containers share the sandbox's network namespace (and so its
   proxy), disable cgroups and ignore chown errors in image layers.

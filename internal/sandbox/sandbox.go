@@ -150,6 +150,9 @@ type Plan struct {
 	// Sync lists copies (sync_files) written back to their host originals
 	// by the forwarder when the command exits.
 	Sync []SyncFile
+	// Pause, when set, is the PID file of podman's pause process, which the
+	// forwarder creates inside the sandbox before running the command.
+	Pause string
 	// Self is the box executable (Options.Self).
 	Self string
 	// Dir, ClearEnv, UnsetEnv and Env set up the runner's own working
@@ -159,6 +162,13 @@ type Plan struct {
 	ClearEnv bool
 	UnsetEnv []string
 	Env      []string
+}
+
+// needsForwarder reports whether the command runs under `box _forward`
+// inside the sandbox: to reach the proxy, to write sync_files back, or to
+// keep podman's pause process.
+func (p *Plan) needsForwarder() bool {
+	return p.Proxy != nil || len(p.Sync) > 0 || p.Pause != ""
 }
 
 // Command returns the invocation as a shell-quoted string.
@@ -566,7 +576,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 	if prof.BindBinary {
 		expose = append(expose, resolved)
 	}
-	if plan.Proxy != nil || len(plan.Sync) > 0 {
+	if plan.needsForwarder() {
 		expose = append(expose, opts.Self) // runs the forwarder inside
 	}
 	for _, e := range expose {

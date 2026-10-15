@@ -24,8 +24,9 @@ import (
 	"github.com/deric/box/internal/sandbox"
 )
 
-// The _proxy and _forward commands are started by box itself (see
-// internal/proxy) and are not part of the documented interface.
+// The _proxy, _forward and _pause commands are started by box itself (see
+// internal/proxy and internal/sandbox) and are not part of the documented
+// interface.
 
 var version = "dev"
 
@@ -84,6 +85,8 @@ func main() {
 		err = cmdProxy(os.Args[2:])
 	case "_forward":
 		err = cmdForward(os.Args[2:])
+	case "_pause":
+		sandbox.Pause()
 	case "version", "--version":
 		fmt.Println("box", version)
 	case "help", "-h", "--help":

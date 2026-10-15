@@ -148,6 +148,7 @@ extra_args = []
 # per-binary layer under ~/.local/state/box/overlays, so they survive across
 # runs without touching the host directories (`box clean claude` drops them).
 [binaries.claude]
+podman = true
 overlays = [
   { path = "?~/.claude", persist = false },
   { path = "?~/.claude/skills", persist = true },
@@ -171,8 +172,6 @@ new_session = false
 # containers from inside its sandbox, set podman = true in its section (the
 # images then land in that binary's store), e.g. for claude:
 #
-# [binaries.claude]
-# podman = true
 [binaries.podman]
 podman = true
 

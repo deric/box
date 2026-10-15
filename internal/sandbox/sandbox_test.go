@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -640,6 +642,10 @@ func TestBuildPodman(t *testing.T) {
 		t.Skip("bwrap plans are built on linux only")
 	}
 	home, cwd, _, bin := fixture(t)
+	self := filepath.Join(filepath.Dir(bin), "box")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	state := filepath.Join(filepath.Dir(home), "state")
 	prof := config.Profile{
 		ROBinds: []string{"/etc"},
@@ -648,7 +654,7 @@ func TestBuildPodman(t *testing.T) {
 		Env:     map[string]string{"CONTAINERS_STORAGE_CONF": "/custom/storage.conf"},
 	}
 	plan, err := buildBwrap(prof, Options{
-		Binary: "tool", Cwd: cwd, Home: home, StateDir: state,
+		Binary: "tool", Args: []string{"--flag"}, Cwd: cwd, Home: home, StateDir: state, Self: self,
 		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
 	}, "bwrap")
 	if err != nil {
@@ -659,6 +665,10 @@ func TestBuildPodman(t *testing.T) {
 		t.Errorf("Dirs = %v, want the podman state dir %s", plan.Dirs, dir)
 	}
 	runtimeDir := RuntimeDir(os.Getuid())
+	pause := PausePidFile(os.Getuid())
+	if plan.Pause != pause || !strings.HasPrefix(pause, runtimeDir+"/") {
+		t.Errorf("Pause = %q, want %q under %s", plan.Pause, pause, runtimeDir)
+	}
 	cmd := " " + strings.Join(plan.Args, " ") + " "
 	for _, want := range []string{
 		" --bind " + dir + " " + dir + " ",
@@ -667,6 +677,9 @@ func TestBuildPodman(t *testing.T) {
 		" --setenv XDG_RUNTIME_DIR " + runtimeDir + " ",
 		" --setenv CONTAINERS_CONF_OVERRIDE " + dir + "/containers.conf ",
 		" --setenv CONTAINERS_STORAGE_CONF /custom/storage.conf ",
+		// The forwarder creates podman's pause process inside.
+		" --ro-bind " + self + " " + self + " ",
+		" -- " + self + " _forward -p " + pause + " -- tool --flag ",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("missing %q in\n%s", want, cmd)
@@ -736,10 +749,65 @@ func TestBuildPodman(t *testing.T) {
 	}
 
 	if _, err := buildBwrap(prof, Options{
-		Binary: "tool", Cwd: cwd, Home: home,
+		Binary: "tool", Cwd: cwd, Home: home, Self: self,
 		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
 	}, "bwrap"); err == nil || !strings.Contains(err.Error(), "state directory") {
 		t.Errorf("without a state directory, want an error, got %v", err)
+	}
+}
+
+func TestStartPause(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the pause process is started on linux only")
+	}
+	root := t.TempDir()
+	// A stand-in for the box binary; `_pause` is ignored and it sleeps.
+	self := filepath.Join(root, "box")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pidFile := filepath.Join(root, "run", "libpod", "tmp", "pause.pid")
+	cmd, err := StartPause(self, pidFile)
+	if err != nil {
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EINVAL) {
+			t.Skipf("user namespaces are not available here: %v", err)
+		}
+		t.Fatal(err)
+	}
+	defer StopPause(cmd)
+	pid := cmd.Process.Pid
+	data, err := os.ReadFile(pidFile)
+	if err != nil || string(data) != strconv.Itoa(pid) {
+		t.Errorf("pid file: %q, %v; want %d", data, err, pid)
+	}
+	proc := "/proc/" + strconv.Itoa(pid)
+	// The user namespace maps the current user and group to root, with
+	// setgroups denied, as podman expects of its pause process.
+	for _, c := range []struct{ file, want string }{
+		{"uid_map", fmt.Sprintf("         0 %10d          1\n", os.Getuid())},
+		{"gid_map", fmt.Sprintf("         0 %10d          1\n", os.Getgid())},
+		{"setgroups", "deny\n"},
+	} {
+		if data, err := os.ReadFile(filepath.Join(proc, c.file)); err != nil || string(data) != c.want {
+			t.Errorf("%s: %q, %v; want %q", c.file, data, err, c.want)
+		}
+	}
+	for _, ns := range []string{"user", "mnt"} {
+		own, err := os.Readlink("/proc/self/ns/" + ns)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.Readlink(filepath.Join(proc, "ns", ns)); err != nil || got == own {
+			t.Errorf("%s namespace: %q, %v; want one of its own (not %q)", ns, got, err, own)
+		}
+	}
+	// A second start must not overwrite the file.
+	if _, err := StartPause(self, pidFile); err == nil || !errors.Is(err, os.ErrExist) {
+		t.Errorf("second start: %v, want an exists error", err)
+	}
+	StopPause(cmd)
+	if err := cmd.Process.Signal(syscall.Signal(0)); err == nil {
+		t.Error("the pause process is still running after StopPause")
 	}
 }
 

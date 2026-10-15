@@ -162,7 +162,12 @@ so an agent can build and run containers without leaving it. The built-in
 from inside its sandbox. `box` then:
 
 - leaves user namespaces enabled (`disable_userns = false`), since rootless
-  podman re-executes itself inside a user namespace of its own;
+  podman runs inside a user namespace of its own, and creates that
+  namespace for it: the `box _forward` wrapper that runs the command
+  starts a pause process in a new user and mount namespace (the sandbox
+  user mapped to root) and writes its PID to
+  `$XDG_RUNTIME_DIR/libpod/tmp/pause.pid`, which podman joins on every
+  invocation;
 - mounts `/sys` read-only, which the OCI runtime bind-mounts into containers;
 - binds `~/.local/state/box/podman/<name>` read-write at the same path:
   it holds the per-binary image store (`storage/`) and, written before
@@ -178,10 +183,13 @@ from inside its sandbox. `box` then:
 
 The generated configuration follows from how the sandbox is built. `bwrap`
 maps a single user ID into its user namespace, so the subordinate ID ranges
-of `/etc/subuid` cannot be used inside; with the files hidden podman falls
-back to its single-mapping mode (it warns about that once, when its pause
-process starts) and `ignore_chown_errors` in `storage.conf` makes image
-layers extract with every file owned by root. Images build and run fine
+of `/etc/subuid` cannot be used inside. Left to create its own namespace,
+podman would insist on mapping them, log an error and two warnings and
+settle for a single mapping; joining the pause process `box` provides
+skips all that. The hidden files keep the fallback quiet should the pause
+process be gone (`podman system migrate` ends it, and the next command
+creates its own, noisily), and `ignore_chown_errors` in `storage.conf`
+makes image layers extract with every file owned by root. Images build and run fine
 this way; what does not work is running a container as another user
 (`USER app`, `--user`) or mapping one in (`--userns=keep-id`). Containers
 and `RUN` steps share the sandbox's network namespace (`netns = "host"`),
