@@ -109,8 +109,8 @@ type mount struct {
 	dest    string
 	upper   string // overlay only; empty means a temporary overlay
 	work    string
-	fd      int // file only: descriptor bwrap copies from
-	mode    os.FileMode
+	fd      int         // file only: descriptor bwrap copies from
+	mode    os.FileMode // file and tmpfs: permissions (0 keeps the default)
 	order   int
 	visible bool // true for binds and overlays: dest exposes host content
 }
@@ -142,6 +142,9 @@ type Plan struct {
 	// Files lists host files held open on descriptors the runner inherits
 	// (copy_files), by descriptor number.
 	Files map[int]string
+	// Inline lists generated files handed to the runner on descriptors
+	// (podman), by descriptor number, with their content.
+	Inline map[int]string
 	// Proxy, when set, is started on the host before the runner.
 	Proxy *Proxy
 	// Sync lists copies (sync_files) written back to their host originals
@@ -177,13 +180,20 @@ func (p *Plan) Command() string {
 	for _, a := range p.Args {
 		parts = append(parts, shellQuote(a))
 	}
-	fds := make([]int, 0, len(p.Files))
+	fds := make([]int, 0, len(p.Files)+len(p.Inline))
 	for fd := range p.Files {
+		fds = append(fds, fd)
+	}
+	for fd := range p.Inline {
 		fds = append(fds, fd)
 	}
 	sort.Ints(fds)
 	for _, fd := range fds {
-		parts = append(parts, strconv.Itoa(fd)+"<"+shellQuote(p.Files[fd]))
+		if file, ok := p.Files[fd]; ok {
+			parts = append(parts, strconv.Itoa(fd)+"<"+shellQuote(file))
+		} else {
+			parts = append(parts, strconv.Itoa(fd)+"<<<"+shellQuote(p.Inline[fd]))
+		}
 	}
 	return strings.Join(parts, " ")
 }
@@ -482,6 +492,19 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			plan.Self = opts.Self
 			// The socket is created by Exec, so it cannot be checked here.
 			add(&mount{kind: kindRW, src: sock, dest: ProxySocket, visible: true})
+		}
+	}
+	if prof.Podman {
+		if resolveLinks {
+			plan.Warnings = append(plan.Warnings, "podman is not supported on this platform; ignored")
+		} else {
+			ms, err := podmanMounts(opts, plan)
+			if err != nil {
+				return nil, err
+			}
+			for _, m := range ms {
+				add(m)
+			}
 		}
 	}
 	for _, o := range prof.Overlays {

@@ -16,10 +16,10 @@ import (
 )
 
 // diskEntry is one thing a binary's sandboxes keep on the host: an overlay
-// layer, a private /tmp directory or a proxy log.
+// layer, a podman state directory, a private /tmp directory or a proxy log.
 type diskEntry struct {
 	name string // binary
-	kind string // "overlay", "tmp" or "log"
+	kind string // "overlay", "podman", "tmp" or "log"
 	path string
 	size int64 // bytes on disk
 }
@@ -27,16 +27,19 @@ type diskEntry struct {
 // diskUsage is what one binary's sandboxes occupy on the host, in bytes.
 type diskUsage struct {
 	overlays int64 // persistent overlay layers under <state>/overlays/<name>
+	podman   int64 // podman image store and state under <state>/podman/<name>
 	tmp      int64 // private /tmp directories <tmp root>/<name>-<pid>
 	logs     int64 // proxy logs <log dir>/<name>-<pid>-<dir>.log
 }
 
-func (u diskUsage) total() int64 { return u.overlays + u.tmp + u.logs }
+func (u diskUsage) total() int64 { return u.overlays + u.podman + u.tmp + u.logs }
 
 func (u *diskUsage) add(e diskEntry) {
 	switch e.kind {
 	case "overlay":
 		u.overlays += e.size
+	case "podman":
+		u.podman += e.size
 	case "tmp":
 		u.tmp += e.size
 	case "log":
@@ -45,9 +48,9 @@ func (u *diskUsage) add(e diskEntry) {
 }
 
 // cmdDf prints how much disk space each binary's sandboxes take on the
-// host: its persistent overlay layers, private /tmp directories and proxy
-// logs, which is what `box clean` would remove. With -a every layer,
-// directory and log is listed on its own.
+// host: its persistent overlay layers, podman image store, private /tmp
+// directories and proxy logs, which is what `box clean` would remove. With
+// -a every layer, directory and log is listed on its own.
 func cmdDf(argv []string) error {
 	var c common
 	var all bool
@@ -73,7 +76,7 @@ func cmdDf(argv []string) error {
 	if err != nil {
 		return err
 	}
-	entries, err := gatherUsage(filepath.Join(stateDir, "overlays"), sandbox.DefaultTmpRoot, dirs, filter)
+	entries, err := gatherUsage(filepath.Join(stateDir, "overlays"), sandbox.PodmanRoot(stateDir), sandbox.DefaultTmpRoot, dirs, filter)
 	if err != nil {
 		return err
 	}
@@ -89,8 +92,9 @@ func cmdDf(argv []string) error {
 	return w.Flush()
 }
 
-// printSummary writes one row per binary with its overlay, /tmp and log
-// usage and the sum, plus a total row when there is more than one binary.
+// printSummary writes one row per binary with its overlay, podman, /tmp and
+// log usage and the sum, plus a total row when there is more than one
+// binary.
 func printSummary(w io.Writer, entries []diskEntry) error {
 	usage := map[string]diskUsage{}
 	for _, e := range entries {
@@ -103,12 +107,12 @@ func printSummary(w io.Writer, entries []diskEntry) error {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	if _, err := fmt.Fprintln(w, "NAME\tOVERLAYS\tTMP\tLOGS\tTOTAL"); err != nil {
+	if _, err := fmt.Fprintln(w, "NAME\tOVERLAYS\tPODMAN\tTMP\tLOGS\tTOTAL"); err != nil {
 		return err
 	}
 	row := func(name string, u diskUsage) error {
-		_, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", name,
-			formatBytes(uint64(u.overlays)), formatBytes(uint64(u.tmp)),
+		_, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", name,
+			formatBytes(uint64(u.overlays)), formatBytes(uint64(u.podman)), formatBytes(uint64(u.tmp)),
 			formatBytes(uint64(u.logs)), formatBytes(uint64(u.total())))
 		return err
 	}
@@ -116,6 +120,7 @@ func printSummary(w io.Writer, entries []diskEntry) error {
 	for _, name := range names {
 		u := usage[name]
 		sum.overlays += u.overlays
+		sum.podman += u.podman
 		sum.tmp += u.tmp
 		sum.logs += u.logs
 		if err := row(name, u); err != nil {
@@ -185,18 +190,21 @@ func kindOrder(kind string) int {
 	switch kind {
 	case "overlay":
 		return 0
-	case "tmp":
+	case "podman":
 		return 1
+	case "tmp":
+		return 2
 	}
-	return 2
+	return 3
 }
 
 // gatherUsage measures the disk usage of every binary that has overlay
-// layers under overlayRoot, private /tmp directories under tmpRoot or proxy
-// logs in logDirs (or in tmpRoot), optionally only of binary filter: one
-// entry per layer, directory and log. Entries that cannot be read are
-// skipped with a warning.
-func gatherUsage(overlayRoot, tmpRoot string, logDirs []string, filter string) ([]diskEntry, error) {
+// layers under overlayRoot, podman state under podmanRoot, private /tmp
+// directories under tmpRoot or proxy logs in logDirs (or in tmpRoot),
+// optionally only of binary filter: one entry per layer, podman directory,
+// /tmp directory and log. Entries that cannot be read are skipped with a
+// warning.
+func gatherUsage(overlayRoot, podmanRoot, tmpRoot string, logDirs []string, filter string) ([]diskEntry, error) {
 	var out []diskEntry
 	add := func(name, kind, path string) error {
 		if filter != "" && name != filter {
@@ -230,6 +238,19 @@ func gatherUsage(overlayRoot, tmpRoot string, logDirs []string, filter string) (
 			if err := add(b.Name(), "overlay", filepath.Join(dir, l.Name())); err != nil {
 				return nil, err
 			}
+		}
+	}
+
+	bins, err = readDir(podmanRoot)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range bins {
+		if !b.IsDir() {
+			continue
+		}
+		if err := add(b.Name(), "podman", filepath.Join(podmanRoot, b.Name())); err != nil {
+			return nil, err
 		}
 	}
 

@@ -107,6 +107,7 @@ type Section struct {
 	Env           map[string]string `toml:"env"`
 	UnsetEnv      []string          `toml:"unset_env"`
 	BindBinary    *bool             `toml:"bind_binary"`
+	Podman        *bool             `toml:"podman"`
 	ExtraArgs     []string          `toml:"extra_args"`
 	SeatbeltRules []string          `toml:"seatbelt_rules"`
 	Inherit       *bool             `toml:"inherit"`
@@ -145,8 +146,14 @@ type Profile struct {
 	Env           map[string]string `toml:"env"`
 	UnsetEnv      []string          `toml:"unset_env"`
 	BindBinary    bool              `toml:"bind_binary"`
-	ExtraArgs     []string          `toml:"extra_args"`
-	SeatbeltRules []string          `toml:"seatbelt_rules"`
+	// Podman sets the sandbox up for rootless podman and buildah: it keeps
+	// user namespaces enabled (podman needs its own), mounts /sys read-only
+	// and a per-binary image store, and writes a containers.conf and
+	// storage.conf suited to a single-UID user namespace (see package
+	// sandbox). It implies DisableUserns = false.
+	Podman        bool     `toml:"podman"`
+	ExtraArgs     []string `toml:"extra_args"`
+	SeatbeltRules []string `toml:"seatbelt_rules"`
 }
 
 // Path returns the configuration file location: $BOX_CONFIG, else
@@ -301,8 +308,14 @@ func (c *Config) Resolve(name string) Profile {
 		Env:           map[string]string{},
 		UnsetEnv:      mergeList(base.UnsetEnv, sec.UnsetEnv, nil),
 		BindBinary:    pick(base.BindBinary, sec.BindBinary, true),
+		Podman:        pick(base.Podman, sec.Podman, false),
 		ExtraArgs:     append(append([]string{}, base.ExtraArgs...), sec.ExtraArgs...),
 		SeatbeltRules: append(append([]string{}, base.SeatbeltRules...), sec.SeatbeltRules...),
+	}
+	if p.Podman {
+		// Rootless podman re-executes itself inside a user namespace of its
+		// own; with --disable-userns it cannot even start.
+		p.DisableUserns = false
 	}
 	for k, v := range base.Env {
 		p.Env[k] = v

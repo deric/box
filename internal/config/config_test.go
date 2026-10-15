@@ -322,3 +322,48 @@ func TestLookupDiffToolPrefersColordiff(t *testing.T) {
 		t.Fatal("expected error when no diff tool is available")
 	}
 }
+
+func TestResolvePodman(t *testing.T) {
+	c, err := Parse(`
+[default]
+disable_userns = true
+
+[binaries.podman]
+podman = true
+
+[binaries.claude]
+podman = false
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := c.Resolve("podman"); !p.Podman || p.DisableUserns {
+		t.Errorf("podman = true must keep user namespaces enabled: %+v", p)
+	}
+	if p := c.Resolve("claude"); p.Podman || !p.DisableUserns {
+		t.Errorf("podman = false must leave disable_userns alone: %+v", p)
+	}
+	if p := c.Resolve("other"); p.Podman || !p.DisableUserns {
+		t.Errorf("unset podman must default to false: %+v", p)
+	}
+}
+
+func TestDefaultTOMLPodman(t *testing.T) {
+	c, err := Parse(DefaultLinuxTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := c.Resolve("podman"); !p.Podman || p.DisableUserns {
+		t.Errorf("the built-in podman section must enable podman: %+v", p)
+	}
+	for _, name := range []string{"claude", "anything"} {
+		if p := c.Resolve(name); p.Podman || !p.DisableUserns {
+			t.Errorf("%s must not enable podman by default: %+v", name, p)
+		}
+	}
+	for _, want := range []string{"registry-1.docker.io", "auth.docker.io", "quay.io", "ghcr.io"} {
+		if !contains(c.Resolve("podman").AllowHosts, want) {
+			t.Errorf("allow_hosts is missing registry %q", want)
+		}
+	}
+}
