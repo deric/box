@@ -665,7 +665,7 @@ func TestBuildPodman(t *testing.T) {
 		" --ro-bind /sys /sys ",
 		" --perms 0700 --tmpfs " + runtimeDir + " ",
 		" --setenv XDG_RUNTIME_DIR " + runtimeDir + " ",
-		" --setenv CONTAINERS_CONF_OVERRIDE " + PodmanConfDir + "/containers.conf ",
+		" --setenv CONTAINERS_CONF_OVERRIDE " + dir + "/containers.conf ",
 		" --setenv CONTAINERS_STORAGE_CONF /custom/storage.conf ",
 	} {
 		if !strings.Contains(cmd, want) {
@@ -681,56 +681,57 @@ func TestBuildPodman(t *testing.T) {
 	if strings.Index(cmd, " --tmpfs "+home+" ") > strings.Index(cmd, " --bind "+dir+" ") {
 		t.Error("the state dir must be bound after the tmpfs on $HOME is mounted")
 	}
+	if strings.Contains(cmd, " --file ") || len(plan.Files) != 0 {
+		t.Errorf("generated files must be bound from the host, not copied in:\n%s", cmd)
+	}
 
-	// Generated files travel on descriptors like copy_files do.
-	byDest := map[string]int{}
-	for fd, content := range plan.Inline {
-		if flags, err := unixFcntl(fd); err != nil || flags&syscall.FD_CLOEXEC != 0 {
-			t.Errorf("descriptor %d must not be close-on-exec (flags %#x, %v)", fd, flags, err)
-		}
-		for _, dest := range []string{"/etc/subuid", "/etc/subgid", PodmanConfDir + "/containers.conf", PodmanConfDir + "/storage.conf"} {
-			if strings.Contains(cmd, " --perms 0644 --file "+strconv.Itoa(fd)+" "+dest+" ") {
-				byDest[dest] = fd
-			}
-		}
-		data := make([]byte, len(content)+1)
-		n, err := syscall.Read(fd, data)
-		if err != nil || string(data[:n]) != content {
-			t.Errorf("descriptor %d: read %q, %v; want %q", fd, data[:n], err, content)
-		}
-		if !strings.Contains(plan.Command(), strconv.Itoa(fd)+"<<<"+shellQuote(content)) {
-			t.Errorf("Command() should feed the content to descriptor %d: %s", fd, plan.Command())
-		}
-	}
-	for _, dest := range []string{PodmanConfDir + "/containers.conf", PodmanConfDir + "/storage.conf"} {
-		if _, ok := byDest[dest]; !ok {
-			t.Errorf("no --file for %s in\n%s", dest, cmd)
-		}
-	}
+	// The subordinate ID files are hidden behind an empty host file, which
+	// must be bound after /etc.
+	subid := filepath.Join(dir, "subid")
 	for _, f := range []string{"/etc/subuid", "/etc/subgid"} {
-		fd, ok := byDest[f]
+		bind := " --ro-bind " + subid + " " + f + " "
 		if fi, err := os.Stat(f); err == nil && fi.Mode().IsRegular() {
-			if !ok || plan.Inline[fd] != "" {
-				t.Errorf("%s must be replaced by an empty file: %v", f, byDest)
+			if !strings.Contains(cmd, bind) {
+				t.Errorf("missing %q in\n%s", bind, cmd)
+			} else if strings.Index(cmd, " --ro-bind /etc /etc ") > strings.Index(cmd, bind) {
+				t.Errorf("%s must be bound after /etc", f)
 			}
-		} else if ok {
-			t.Errorf("%s does not exist on the host and must not be created", f)
+		} else if strings.Contains(cmd, bind) {
+			t.Errorf("%s does not exist on the host and cannot be bound over", f)
 		}
 	}
-	store := plan.Inline[byDest[PodmanConfDir+"/storage.conf"]]
+
+	// The generated files are written before running.
+	want := []string{filepath.Join(dir, "containers.conf"), filepath.Join(dir, "storage.conf"), subid}
+	if got := plan.WrittenFiles(); !slices.Equal(got, want) {
+		t.Errorf("WrittenFiles() = %v, want %v", got, want)
+	}
+	if plan.Writes[subid] != "" {
+		t.Errorf("subid must be empty, got %q", plan.Writes[subid])
+	}
+	store := plan.Writes[filepath.Join(dir, "storage.conf")]
 	if !strings.Contains(store, "graphroot = "+strconv.Quote(filepath.Join(dir, "storage"))) ||
 		!strings.Contains(store, `ignore_chown_errors = "true"`) {
 		t.Errorf("storage.conf:\n%s", store)
 	}
-	conf := plan.Inline[byDest[PodmanConfDir+"/containers.conf"]]
+	conf := plan.Writes[filepath.Join(dir, "containers.conf")]
 	for _, want := range []string{`netns = "host"`, `cgroups = "disabled"`, `cgroup_manager = "cgroupfs"`} {
 		if !strings.Contains(conf, want) {
 			t.Errorf("containers.conf is missing %q:\n%s", want, conf)
 		}
 	}
-	for fd := range plan.Inline {
-		if err := syscall.Close(fd); err != nil {
-			t.Fatal(err)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(subid, []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.writeFiles(); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range plan.Writes {
+		if data, err := os.ReadFile(path); err != nil || string(data) != content {
+			t.Errorf("%s: %q, %v; want %q", path, data, err, content)
 		}
 	}
 
@@ -751,8 +752,8 @@ func TestBuildPodmanSeatbelt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Inline) != 0 || len(plan.Dirs) != 0 {
-		t.Errorf("podman must be ignored on macOS: Inline %v Dirs %v", plan.Inline, plan.Dirs)
+	if len(plan.Writes) != 0 || len(plan.Dirs) != 0 {
+		t.Errorf("podman must be ignored on macOS: Writes %v Dirs %v", plan.Writes, plan.Dirs)
 	}
 	if !slices.ContainsFunc(plan.Warnings, func(w string) bool { return strings.Contains(w, "podman") }) {
 		t.Errorf("want a warning about podman, got %v", plan.Warnings)

@@ -67,7 +67,7 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 		}
 	}
 	if prof.Podman {
-		for _, kv := range podmanEnv(os.Getuid()) {
+		for _, kv := range podmanEnv(os.Getuid(), PodmanDir(opts.StateDir, plan.Name)) {
 			if _, set := prof.Env[kv[0]]; !set {
 				args = append(args, "--setenv", kv[0], kv[1])
 			}

@@ -142,9 +142,9 @@ type Plan struct {
 	// Files lists host files held open on descriptors the runner inherits
 	// (copy_files), by descriptor number.
 	Files map[int]string
-	// Inline lists generated files handed to the runner on descriptors
-	// (podman), by descriptor number, with their content.
-	Inline map[int]string
+	// Writes lists generated host files (podman's configuration), by path,
+	// with their content; they are written before running, after Dirs.
+	Writes map[string]string
 	// Proxy, when set, is started on the host before the runner.
 	Proxy *Proxy
 	// Sync lists copies (sync_files) written back to their host originals
@@ -180,22 +180,31 @@ func (p *Plan) Command() string {
 	for _, a := range p.Args {
 		parts = append(parts, shellQuote(a))
 	}
-	fds := make([]int, 0, len(p.Files)+len(p.Inline))
+	fds := make([]int, 0, len(p.Files))
 	for fd := range p.Files {
-		fds = append(fds, fd)
-	}
-	for fd := range p.Inline {
 		fds = append(fds, fd)
 	}
 	sort.Ints(fds)
 	for _, fd := range fds {
-		if file, ok := p.Files[fd]; ok {
-			parts = append(parts, strconv.Itoa(fd)+"<"+shellQuote(file))
-		} else {
-			parts = append(parts, strconv.Itoa(fd)+"<<<"+shellQuote(p.Inline[fd]))
-		}
+		parts = append(parts, strconv.Itoa(fd)+"<"+shellQuote(p.Files[fd]))
 	}
 	return strings.Join(parts, " ")
+}
+
+// WrittenFiles returns the paths of the files Exec writes on the host
+// before running (Writes), sorted.
+func (p *Plan) WrittenFiles() []string {
+	return sortedKeys(p.Writes)
+}
+
+// writeFiles writes p.Writes to the host, replacing earlier content.
+func (p *Plan) writeFiles() error {
+	for _, path := range p.WrittenFiles() {
+		if err := os.WriteFile(path, []byte(p.Writes[path]), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ProxyCommand returns the host-side proxy invocation as a shell-quoted
@@ -231,6 +240,9 @@ func (p *Plan) Exec() error {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
 		}
+	}
+	if err := p.writeFiles(); err != nil {
+		return err
 	}
 	if p.TmpDir != "" {
 		if err := makeTmpDir(p.TmpDir); err != nil {

@@ -121,11 +121,11 @@ bind_binary = true
 
 # Let rootless podman (and buildah) run inside: keeps user namespaces enabled
 # (podman needs one of its own, so this implies disable_userns = false),
-# mounts /sys read-only and a per-binary image store from
-# ~/.local/state/box/podman/<binary>, and points podman at a generated
-# containers.conf and storage.conf that fit the sandbox: containers share its
-# network namespace (and so reach allow_hosts through the proxy), cgroups are
-# off, and image layers are owned by a single user. See the README.
+# mounts /sys read-only and ~/.local/state/box/podman/<binary> read-write,
+# which holds the binary's image store and a generated containers.conf and
+# storage.conf that fit the sandbox: containers share its network namespace
+# (and so reach allow_hosts through the proxy), cgroups are off, and image
+# layers are owned by a single user. See the README.
 podman = false
 
 # Raw arguments appended to the bwrap command line, for anything not covered.

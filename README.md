@@ -164,20 +164,21 @@ from inside its sandbox. `box` then:
 - leaves user namespaces enabled (`disable_userns = false`), since rootless
   podman re-executes itself inside a user namespace of its own;
 - mounts `/sys` read-only, which the OCI runtime bind-mounts into containers;
-- binds a per-binary image store from `~/.local/state/box/podman/<name>`
-  (`box df` lists it, `box clean` removes it). The host's own images are
-  not shared: they were created with a different ID mapping;
+- binds `~/.local/state/box/podman/<name>` read-write at the same path:
+  it holds the per-binary image store (`storage/`) and, written before
+  each run, a `containers.conf` and `storage.conf` pointed at by
+  `CONTAINERS_CONF_OVERRIDE` and `CONTAINERS_STORAGE_CONF` (an entry in
+  `env` for either variable replaces the generated file) and an empty
+  `subid` file bound over `/etc/subuid` and `/etc/subgid`. `box df` lists
+  the directory and `box clean` removes it; `box show` names the files it
+  would write. The host's own images are not shared: they were created
+  with a different ID mapping;
 - gives the sandbox a private tmpfs at `/run/user/<uid>` as
-  `XDG_RUNTIME_DIR` for podman's runtime state;
-- replaces `/etc/subuid` and `/etc/subgid` with empty files and writes a
-  `containers.conf` and `storage.conf` under `/run/box/podman/`, pointed at
-  by `CONTAINERS_CONF_OVERRIDE` and `CONTAINERS_STORAGE_CONF` (an entry in
-  `env` for either variable replaces the generated file). `box show`
-  prints the generated content after the command line as here-strings.
+  `XDG_RUNTIME_DIR` for podman's runtime state.
 
 The generated configuration follows from how the sandbox is built. `bwrap`
 maps a single user ID into its user namespace, so the subordinate ID ranges
-of `/etc/subuid` cannot be used inside; with the files empty podman falls
+of `/etc/subuid` cannot be used inside; with the files hidden podman falls
 back to its single-mapping mode (it warns about that once, when its pause
 process starts) and `ignore_chown_errors` in `storage.conf` makes image
 layers extract with every file owned by root. Images build and run fine

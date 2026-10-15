@@ -158,6 +158,9 @@ func cmdRun(argv []string, dryRun bool) error {
 		fmt.Fprintln(os.Stderr, "box: warning:", w)
 	}
 	if dryRun {
+		for _, f := range plan.WrittenFiles() {
+			fmt.Println("# written on the host first:", f)
+		}
 		if pc := plan.ProxyCommand(); pc != "" {
 			fmt.Println("# started on the host first:", pc)
 		}
