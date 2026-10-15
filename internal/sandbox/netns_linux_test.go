@@ -45,7 +45,9 @@ func TestPrepareDNS(t *testing.T) {
 	cmd.Env = append(os.Environ(), "BOX_TEST_NETNS=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		if strings.Contains(string(out), "unshare failed") || strings.Contains(string(out), "unrecognized option") {
+		// unshare itself failed (user namespaces disabled, restricted as
+		// on Ubuntu, or too old): box warns and runs without DNS there.
+		if strings.HasPrefix(string(out), "unshare:") {
 			t.Skipf("cannot create the namespaces here: %s", strings.TrimSpace(string(out)))
 		}
 		t.Fatalf("%v:\n%s", err, out)
