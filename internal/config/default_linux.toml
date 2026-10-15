@@ -128,6 +128,20 @@ bind_binary = true
 # layers are owned by a single user. See the README.
 podman = false
 
+# Resource limits. cpus and memory are applied as a transient systemd scope
+# (a cgroup of the sandbox's own, named box-<binary>-<pid>.scope) that box
+# moves itself into before starting bwrap, so they cover the sandboxed
+# program, everything it starts and the proxy: cpus is CPU time per second
+# in cores (1.5 is one and a half cores), memory a size such as "2G" that
+# swap cannot stretch. They need a systemd user manager on cgroups v2; where
+# there is none, box warns and runs without them. tmpfs_size caps each
+# tmpfs mount ($HOME, /var/tmp, ... but not the private /tmp, which is a
+# host directory); tmpfs lives in memory and counts towards the memory
+# limit. 0 or "" disables a limit.
+cpus = 1
+memory = "2G"
+tmpfs_size = "1G"
+
 # Raw arguments appended to the bwrap command line, for anything not covered.
 extra_args = []
 

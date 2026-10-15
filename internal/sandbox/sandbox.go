@@ -111,8 +111,68 @@ type mount struct {
 	work    string
 	fd      int         // file only: descriptor bwrap copies from
 	mode    os.FileMode // file and tmpfs: permissions (0 keeps the default)
+	size    uint64      // tmpfs only: size in bytes (0 keeps the default)
 	order   int
 	visible bool // true for binds and overlays: dest exposes host content
+}
+
+// Limits bounds the resources of a sandbox: the sandboxed program,
+// everything it starts and the proxy. On Linux box applies them by moving
+// itself into a transient systemd scope, a cgroup of its own, before it
+// replaces itself with bwrap (see Plan.Scope).
+type Limits struct {
+	CPUs   float64 // CPU time per second in cores; 0 means unlimited
+	Memory uint64  // bytes of memory, swap excluded; 0 means unlimited
+}
+
+// limits returns the profile's resource limits, or nil when it sets none.
+func limits(prof config.Profile) (*Limits, error) {
+	if prof.CPUs < 0 {
+		return nil, fmt.Errorf("cpus: must not be negative")
+	}
+	mem, err := config.ParseSize(prof.Memory)
+	if err != nil {
+		return nil, fmt.Errorf("memory: %w", err)
+	}
+	if prof.CPUs == 0 && mem == 0 {
+		return nil, nil
+	}
+	return &Limits{CPUs: prof.CPUs, Memory: mem}, nil
+}
+
+// Properties renders the limits as systemd unit properties, the way
+// systemd-run -p takes them: MemoryMax in bytes with MemorySwapMax=0, so
+// swap cannot stretch the memory limit, and CPUQuota as a percentage of
+// one core.
+func (l *Limits) Properties() []string {
+	var out []string
+	if l.Memory > 0 {
+		out = append(out, "MemoryMax="+strconv.FormatUint(l.Memory, 10), "MemorySwapMax=0")
+	}
+	if l.CPUs > 0 {
+		out = append(out, fmt.Sprintf("CPUQuota=%s%%", strconv.FormatFloat(l.CPUs*100, 'f', -1, 64)))
+	}
+	return out
+}
+
+// ScopeName returns the systemd scope unit a sandbox of binary name with
+// the given id runs in: box-<name>-<id>.scope, with characters that unit
+// names do not allow escaped the way systemd-escape does.
+func ScopeName(name, id string) string {
+	var b strings.Builder
+	b.WriteString("box-")
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == ':', c == '_', c == '-', c == '.' && i > 0:
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, `\x%02x`, c)
+		}
+	}
+	b.WriteString("-" + id + ".scope")
+	return b.String()
 }
 
 // ProcTitlePrefix starts argv[0] of every bwrap process started by Exec,
@@ -153,6 +213,11 @@ type Plan struct {
 	// Pause, when set, is the PID file of podman's pause process, which the
 	// forwarder creates inside the sandbox before running the command.
 	Pause string
+	// Limits, when set, are applied before running: Exec moves itself
+	// into the transient systemd scope Scope (see ScopeName) with the
+	// matching properties, which the runner and its sandbox then inherit.
+	Limits *Limits
+	Scope  string
 	// Self is the box executable (Options.Self).
 	Self string
 	// Dir, ClearEnv, UnsetEnv and Env set up the runner's own working
@@ -171,9 +236,17 @@ func (p *Plan) needsForwarder() bool {
 	return p.Proxy != nil || len(p.Sync) > 0 || p.Pause != ""
 }
 
-// Command returns the invocation as a shell-quoted string.
+// Command returns the invocation as a shell-quoted string. Limits are
+// rendered as the systemd-run prefix that creates the same scope.
 func (p *Plan) Command() string {
 	var parts []string
+	if p.Limits != nil {
+		parts = append(parts, "systemd-run", "--user", "--scope", "--quiet", "--unit", shellQuote(p.Scope))
+		for _, prop := range p.Limits.Properties() {
+			parts = append(parts, "-p", shellQuote(prop))
+		}
+		parts = append(parts, "--")
+	}
 	if p.ClearEnv || len(p.UnsetEnv) > 0 || len(p.Env) > 0 {
 		parts = append(parts, "env")
 		if p.ClearEnv {
@@ -238,9 +311,11 @@ func (p *Plan) proxyArgs() []string {
 	return args
 }
 
-// Exec creates any required directories, starts the proxy if there is one
-// and replaces the current process with the runner, tagging argv[0] with
-// ProcTitlePrefix. It only returns on error.
+// Exec creates any required directories, applies the limits, starts the
+// proxy if there is one and replaces the current process with the runner,
+// tagging argv[0] with ProcTitlePrefix. Limits that cannot be applied are
+// reported as warnings on stderr; the sandbox still runs. It only returns
+// on error.
 func (p *Plan) Exec() error {
 	// The proxy child gets a parent-death signal, which Linux ties to the
 	// thread that forked it; keep this goroutine on one thread so the same
@@ -262,6 +337,16 @@ func (p *Plan) Exec() error {
 	if p.Dir != "" {
 		if err := os.Chdir(p.Dir); err != nil {
 			return err
+		}
+	}
+	if p.Limits != nil {
+		// Before the proxy is forked, so that it lives in the scope too.
+		warnings, err := applyLimits(p.Scope, p.Name, *p.Limits)
+		if err != nil {
+			warnings = append(warnings, "resource limits not applied: "+err.Error())
+		}
+		for _, w := range warnings {
+			fmt.Fprintln(os.Stderr, "box: warning:", w)
 		}
 	}
 	proxy, err := p.startProxy()
@@ -461,6 +546,10 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 	for _, p := range prof.DevBinds {
 		bind(p, kindDev)
 	}
+	tmpfsSize, err := config.ParseSize(prof.TmpfsSize)
+	if err != nil {
+		return nil, fmt.Errorf("tmpfs_size: %w", err)
+	}
 	for _, p := range prof.Tmpfs {
 		dest, _ := exp(p)
 		if dest == "" {
@@ -469,7 +558,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 		if resolveLinks {
 			dest = realPath(dest)
 		}
-		add(&mount{kind: kindTmpfs, dest: dest})
+		add(&mount{kind: kindTmpfs, dest: dest, size: tmpfsSize})
 	}
 	if prof.PrivateTmp {
 		if resolveLinks {
@@ -588,6 +677,12 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			if !covered(mounts, c) {
 				add(&mount{kind: kindRO, src: c, dest: c, visible: true})
 			}
+		}
+	}
+
+	for _, m := range mounts {
+		if m.kind == kindTmpfs && m.size == 0 {
+			m.size = tmpfsSize
 		}
 	}
 

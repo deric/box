@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Resource limits, on by default: every sandbox runs in a transient
+  systemd scope (a cgroup of its own, `box-<name>-<pid>.scope`) with
+  `cpus = 1` and `memory = "2G"` (swap excluded, `MemorySwapMax=0`), and
+  every tmpfs mount is capped at `tmpfs_size = "1G"` with `bwrap --size`.
+  `box` asks the systemd user manager for the scope over D-Bus with its own
+  PID, the way `systemd-run --user --scope` does, before replacing itself
+  with `bwrap`, so the limits cover the sandboxed program, everything it
+  starts and the proxy, and reads them back from cgroupfs to warn about a
+  controller that is not delegated. Without a reachable user manager it
+  warns and runs without limits. `box show` prints the equivalent
+  `systemd-run` prefix, `box info` reports the limits mechanism, and
+  `box config` the values. Set a limit to `0` or `""` to lift it.
+
 - `podman = true` sets a sandbox up for rootless podman and buildah, so an
   agent can build and run containers from inside: user namespaces stay
   enabled, `/sys` is mounted read-only, a per-binary directory

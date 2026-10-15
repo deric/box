@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -108,6 +109,9 @@ type Section struct {
 	UnsetEnv      []string          `toml:"unset_env"`
 	BindBinary    *bool             `toml:"bind_binary"`
 	Podman        *bool             `toml:"podman"`
+	CPUs          *float64          `toml:"cpus"`
+	Memory        *string           `toml:"memory"`
+	TmpfsSize     *string           `toml:"tmpfs_size"`
 	ExtraArgs     []string          `toml:"extra_args"`
 	SeatbeltRules []string          `toml:"seatbelt_rules"`
 	Inherit       *bool             `toml:"inherit"`
@@ -151,9 +155,60 @@ type Profile struct {
 	// and a per-binary image store, and writes a containers.conf and
 	// storage.conf suited to a single-UID user namespace (see package
 	// sandbox). It implies DisableUserns = false.
-	Podman        bool     `toml:"podman"`
+	Podman bool `toml:"podman"`
+	// CPUs and Memory bound the sandbox and everything it starts: CPU time
+	// per second in cores (1.5 is one and a half cores) and bytes of memory
+	// (a size such as "2G", see ParseSize), swap excluded. On Linux they
+	// are applied as a transient systemd scope, a cgroup of the sandbox's
+	// own. Zero or empty means unlimited.
+	CPUs   float64 `toml:"cpus"`
+	Memory string  `toml:"memory"`
+	// TmpfsSize caps each tmpfs mount (bwrap --size); empty means the
+	// kernel default of half the physical memory per mount.
+	TmpfsSize     string   `toml:"tmpfs_size"`
 	ExtraArgs     []string `toml:"extra_args"`
 	SeatbeltRules []string `toml:"seatbelt_rules"`
+}
+
+// ParseSize parses a byte count such as "2G", "512M", "1.5G" or
+// "1073741824". The suffixes K, M, G and T are binary (1024-based), match
+// regardless of case and may be followed by B or iB. An empty string or "0"
+// is 0, which means no limit wherever a size is used.
+func ParseSize(s string) (uint64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	num := strings.TrimRight(s, "bBiI"+"kKmMgGtT")
+	suffix := strings.ToUpper(strings.TrimSuffix(strings.TrimSuffix(strings.ToUpper(s[len(num):]), "B"), "I"))
+	mult := uint64(1)
+	switch suffix {
+	case "":
+	case "K":
+		mult = 1 << 10
+	case "M":
+		mult = 1 << 20
+	case "G":
+		mult = 1 << 30
+	case "T":
+		mult = 1 << 40
+	default:
+		return 0, fmt.Errorf("invalid size %q", s)
+	}
+	if num == "" || num[0] == '-' || num[0] == '+' {
+		return 0, fmt.Errorf("invalid size %q", s)
+	}
+	if n, err := strconv.ParseUint(num, 10, 64); err == nil {
+		if n > ^uint64(0)/mult {
+			return 0, fmt.Errorf("size %q is too large", s)
+		}
+		return n * mult, nil
+	}
+	f, err := strconv.ParseFloat(num, 64)
+	if err != nil || f < 0 || f*float64(mult) >= float64(^uint64(0)) {
+		return 0, fmt.Errorf("invalid size %q", s)
+	}
+	return uint64(f * float64(mult)), nil
 }
 
 // Path returns the configuration file location: $BOX_CONFIG, else
@@ -309,6 +364,9 @@ func (c *Config) Resolve(name string) Profile {
 		UnsetEnv:      mergeList(base.UnsetEnv, sec.UnsetEnv, nil),
 		BindBinary:    pick(base.BindBinary, sec.BindBinary, true),
 		Podman:        pick(base.Podman, sec.Podman, false),
+		CPUs:          pick(base.CPUs, sec.CPUs, 0),
+		Memory:        pick(base.Memory, sec.Memory, ""),
+		TmpfsSize:     pick(base.TmpfsSize, sec.TmpfsSize, ""),
 		ExtraArgs:     append(append([]string{}, base.ExtraArgs...), sec.ExtraArgs...),
 		SeatbeltRules: append(append([]string{}, base.SeatbeltRules...), sec.SeatbeltRules...),
 	}

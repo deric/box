@@ -41,7 +41,7 @@ Usage:
   box df [-a] [-c FILE] [<command>]                  show disk usage of overlay layers, podman images, /tmp dirs and logs
   box ps [<command>]                                 list running sandboxes
   box top [-i DURATION] [-c FILE] [<command>]        watch running sandboxes and denied connections
-  box info [-c FILE]                                 print version, isolation mechanism, config path, log dir
+  box info [-c FILE]                                 print version, isolation mechanism, limits, config path, log dir
   box version
 
 Flags:
@@ -511,6 +511,7 @@ func cmdInfo(argv []string) error {
 		{"version", version},
 		{"platform", runtime.GOOS + "/" + runtime.GOARCH},
 		{"isolation", runner},
+		{"limits", sandbox.LimitsInfo()},
 		{"config", configPath + configNote},
 		{"state dir", stateDir},
 		{"tmp root", sandbox.DefaultTmpRoot},
