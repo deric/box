@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- DNS inside sandboxes, on by default (`dns = true`): a sandbox behind the
+  proxy gets a `/etc/resolv.conf` naming `127.0.0.1`, where `box` serves
+  DNS over UDP and TCP and relays every query through the proxy to the
+  nameservers of the host's `/etc/resolv.conf`; a query the host cannot
+  answer gets SERVFAIL rather than a timeout. Since nothing inside a
+  `bwrap` sandbox may bind port 53, `box run` now creates the network
+  namespace itself: it execs `unshare -U -n --keep-caps` (util-linux),
+  then `box _netns`, which binds the listeners, drops every capability
+  and execs `bwrap` with `--share-net`, so the PID, the proxy and the
+  sandboxed program's lack of capabilities stay as they were. `box show`
+  prints the whole chain, `box info` reports whether DNS is available,
+  and where the namespaces cannot be set up `box` warns and runs without
+  DNS. Answers are not filtered by `allow_hosts`; `dns = false` leaves a
+  sandbox without a resolver.
+
 - Resource limits, on by default: every sandbox runs in a transient
   systemd scope (a cgroup of its own, `box-<name>-<pid>.scope`) with
   `cpus = 1` and `memory = "2G"` (swap excluded, `MemorySwapMax=0`), and

@@ -60,8 +60,17 @@ sync_files = []
 # Denied requests are logged to <log_dir>/<binary>-<pid>-<dir>.log, where
 # <dir> is the working directory with slashes turned into dashes. Set
 # network = true to share the host network instead.
+#
+# With dns = true the sandbox can also resolve names: box binds a DNS
+# listener on 127.0.0.1:53 inside the sandbox's network namespace (which it
+# creates itself with unshare(1) for that), points /etc/resolv.conf at it,
+# and relays every query through the proxy to the host's nameservers.
+# Answers are not filtered by allow_hosts, so a program can look up any
+# name even though it can only connect to the listed hosts; set dns =
+# false to leave the sandbox without a resolver.
 network = false
 proxy = true
+dns = true
 log_dir = "/tmp/box"
 allow_hosts = [
   "api.dagger.cloud", "apt.voxpupuli.org",
@@ -198,3 +207,6 @@ podman = true
 # [binaries.untrusted-tool]
 # network = false
 # proxy = false             # no network at all
+#
+# [binaries.quiet-tool]
+# dns = false               # proxy only, no name resolution

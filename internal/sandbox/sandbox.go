@@ -5,6 +5,7 @@ package sandbox
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path"
@@ -17,6 +18,7 @@ import (
 	"syscall"
 
 	"github.com/deric/box/internal/config"
+	"github.com/deric/box/internal/proxy"
 )
 
 // Options carries the per-invocation inputs that are not part of the profile.
@@ -51,6 +53,21 @@ type Proxy struct {
 	Socket string   // unix socket on the host, bound into the sandbox
 	Log    string   // host file the proxy logs denied requests to
 	Allow  []string // allowed destination hosts
+}
+
+// DNS describes name resolution for a sandbox behind the proxy. Nothing
+// inside the sandbox may bind port 53 (bwrap leaves it in a user namespace
+// that does not own its network namespace), so box creates the network
+// namespace itself: Exec runs `unshare -U -n` (Unshare is the executable)
+// followed by `box _netns`, which binds the DNS listeners to DNSAddr there,
+// places them at descriptors UDPFD and TCPFD, drops its capabilities and
+// execs bwrap with --share-net. Inside, the forwarder serves DNS on those
+// descriptors and relays each query through the proxy to the host's
+// resolver, and a resolv.conf pointing at DNSAddr is bound over the
+// sandbox's /etc/resolv.conf (see Plan.Data).
+type DNS struct {
+	Unshare      string // unshare(1) on the host
+	UDPFD, TCPFD int    // descriptors the listeners are placed at
 }
 
 // ProxyFiles returns the socket and log paths for sandbox name/id: the
@@ -101,6 +118,7 @@ const (
 	kindSymlink
 	kindOverlay
 	kindFile // a copy of a host file, passed on an inherited descriptor
+	kindData // a generated file, passed on an inherited descriptor
 )
 
 type mount struct {
@@ -109,8 +127,8 @@ type mount struct {
 	dest    string
 	upper   string // overlay only; empty means a temporary overlay
 	work    string
-	fd      int         // file only: descriptor bwrap copies from
-	mode    os.FileMode // file and tmpfs: permissions (0 keeps the default)
+	fd      int         // file and data only: descriptor bwrap copies from
+	mode    os.FileMode // file, data and tmpfs: permissions (0 keeps the default)
 	size    uint64      // tmpfs only: size in bytes (0 keeps the default)
 	order   int
 	visible bool // true for binds and overlays: dest exposes host content
@@ -202,11 +220,17 @@ type Plan struct {
 	// Files lists host files held open on descriptors the runner inherits
 	// (copy_files), by descriptor number.
 	Files map[int]string
+	// Data lists generated files (the sandbox's resolv.conf) by the
+	// descriptor the runner reads them from, with their content.
+	Data map[int]string
 	// Writes lists generated host files (podman's configuration), by path,
 	// with their content; they are written before running, after Dirs.
 	Writes map[string]string
 	// Proxy, when set, is started on the host before the runner.
 	Proxy *Proxy
+	// DNS, when set, has Exec create the network namespace itself and
+	// bind the DNS listeners into it before the runner (see DNS).
+	DNS *DNS
 	// Sync lists copies (sync_files) written back to their host originals
 	// by the forwarder when the command exits.
 	Sync []SyncFile
@@ -259,19 +283,40 @@ func (p *Plan) Command() string {
 			parts = append(parts, shellQuote(kv))
 		}
 	}
+	if p.DNS != nil {
+		parts = append(parts, shellQuote(p.DNS.Unshare))
+		for _, a := range p.netnsArgs() {
+			parts = append(parts, shellQuote(a))
+		}
+	}
 	parts = append(parts, shellQuote(p.Exe))
 	for _, a := range p.Args {
 		parts = append(parts, shellQuote(a))
 	}
-	fds := make([]int, 0, len(p.Files))
-	for fd := range p.Files {
-		fds = append(fds, fd)
-	}
-	sort.Ints(fds)
-	for _, fd := range fds {
+	for _, fd := range sortedInts(p.Files) {
 		parts = append(parts, strconv.Itoa(fd)+"<"+shellQuote(p.Files[fd]))
 	}
+	for _, fd := range sortedInts(p.Data) {
+		parts = append(parts, strconv.Itoa(fd)+"<<<"+shellQuote(strings.TrimSuffix(p.Data[fd], "\n")))
+	}
 	return strings.Join(parts, " ")
+}
+
+// netnsArgs returns the arguments of unshare(1) that run `box _netns`, which
+// prepares DNS and then execs the runner: the unshare options, then the
+// _netns command line up to and including its "--" (see DNS).
+func (p *Plan) netnsArgs() []string {
+	args := unshareArgs(os.Getuid(), os.Getgid())
+	return append(args, p.Self, "_netns", "-u", strconv.Itoa(p.DNS.UDPFD), "-t", strconv.Itoa(p.DNS.TCPFD), "-n", p.Name, "--")
+}
+
+func sortedInts[V any](m map[int]V) []int {
+	keys := make([]int, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return keys
 }
 
 // WrittenFiles returns the paths of the files Exec writes on the host
@@ -305,6 +350,9 @@ func (p *Plan) ProxyCommand() string {
 
 func (p *Plan) proxyArgs() []string {
 	args := []string{"_proxy", "-s", p.Proxy.Socket, "-l", p.Proxy.Log}
+	if p.DNS != nil {
+		args = append(args, "-d")
+	}
 	for _, h := range p.Proxy.Allow {
 		args = append(args, "-a", h)
 	}
@@ -353,8 +401,17 @@ func (p *Plan) Exec() error {
 	if err != nil {
 		return err
 	}
+	exe := p.Exe
 	argv := append([]string{ProcTitlePrefix + p.Name}, p.Args...)
-	err = syscall.Exec(p.Exe, argv, p.environ())
+	if p.DNS != nil {
+		// unshare execs `box _netns`, which execs the runner (tagging it
+		// as above) once the DNS listeners are bound: the same process
+		// throughout, so the proxy's parent does not change.
+		exe = p.DNS.Unshare
+		argv = append(append([]string{"unshare"}, p.netnsArgs()...), p.Exe)
+		argv = append(argv, p.Args...)
+	}
+	err = syscall.Exec(exe, argv, p.environ())
 	if proxy != nil {
 		_ = proxy.Kill()
 	}
@@ -603,6 +660,11 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			plan.Self = opts.Self
 			// The socket is created by Exec, so it cannot be checked here.
 			add(&mount{kind: kindRW, src: sock, dest: ProxySocket, visible: true})
+			if prof.DNS {
+				if m := collectDNS(opts, plan); m != nil {
+					add(m)
+				}
+			}
 		}
 	}
 	if prof.Podman {
@@ -825,6 +887,86 @@ func copyFile(expanded func(string) (string, bool), raw string, plan *Plan) *mou
 	}
 	plan.Files[fd] = src
 	return &mount{kind: kindFile, src: src, dest: src, fd: fd, mode: fi.Mode().Perm(), visible: true}
+}
+
+// resolvConf is the host's resolver configuration, which the sandbox's
+// own is derived from and bound over; tests replace it.
+var resolvConf = "/etc/resolv.conf"
+
+// collectDNS sets the plan up for DNS (see DNS) and returns the mount of
+// the sandbox's resolv.conf. When the namespaces cannot be prepared the
+// sandbox runs without DNS, with a warning.
+func collectDNS(opts *Options, plan *Plan) *mount {
+	unshare, err := lookupUnshare()
+	if err != nil {
+		plan.Warnings = append(plan.Warnings, "dns disabled: unshare not found; install util-linux")
+		return nil
+	}
+	if err := probeNetns(unshare, opts.Self); err != nil {
+		plan.Warnings = append(plan.Warnings, "dns disabled: cannot prepare its network namespace: "+err.Error())
+		return nil
+	}
+	// The listeners replace these placeholders, which keep their
+	// descriptor numbers free until then (left without close-on-exec so
+	// that the runner inherits them).
+	var fds [2]int
+	for i := range fds {
+		fd, err := syscall.Open(os.DevNull, syscall.O_RDONLY, 0)
+		if err != nil {
+			plan.Warnings = append(plan.Warnings, "dns disabled: "+err.Error())
+			return nil
+		}
+		fds[i] = fd
+	}
+	plan.DNS = &DNS{Unshare: unshare, UDPFD: fds[0], TCPFD: fds[1]}
+	plan.Self = opts.Self
+	return resolvConfMount(plan)
+}
+
+// resolvConfMount makes the sandbox's resolv.conf: the host's search
+// domains and options with DNSAddr as the only nameserver, bound read-only
+// over /etc/resolv.conf, at the file the host's symlink resolves to since
+// /etc is bound from the host. Without a host file there is nothing to
+// cover: the libc default is DNSAddr already.
+func resolvConfMount(plan *Plan) *mount {
+	data, err := os.ReadFile(resolvConf)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s not replaced in the sandbox: %v", resolvConf, err))
+		}
+		return nil
+	}
+	_, rest := proxy.ParseResolvConf(data)
+	var b strings.Builder
+	b.WriteString("# Written by box: queries go through its proxy to the host's resolver.\n")
+	host, _, _ := net.SplitHostPort(DNSAddr)
+	b.WriteString("nameserver " + host + "\n")
+	for _, line := range rest {
+		b.WriteString(line + "\n")
+	}
+	content := b.String()
+	dest := resolvConf
+	if real, err := filepath.EvalSymlinks(resolvConf); err == nil {
+		dest = real
+	}
+	var p [2]int
+	if err := syscall.Pipe(p[:]); err != nil {
+		plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s not replaced in the sandbox: %v", resolvConf, err))
+		return nil
+	}
+	// The content fits the pipe buffer; the runner reads it to EOF.
+	_, err = syscall.Write(p[1], []byte(content))
+	_ = syscall.Close(p[1])
+	if err != nil {
+		_ = syscall.Close(p[0])
+		plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s not replaced in the sandbox: %v", resolvConf, err))
+		return nil
+	}
+	if plan.Data == nil {
+		plan.Data = map[int]string{}
+	}
+	plan.Data[p[0]] = content
+	return &mount{kind: kindData, dest: dest, fd: p[0], mode: 0o444}
 }
 
 // passEnv returns the host variables selected by prof.PassEnv as KEY=VALUE

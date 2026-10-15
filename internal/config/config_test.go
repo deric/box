@@ -424,3 +424,29 @@ func TestParseSize(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveDNS(t *testing.T) {
+	c, err := Parse(DefaultLinuxTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Resolve("anything").DNS {
+		t.Error("dns should be on by default")
+	}
+	c, err = Parse(`
+[default]
+dns = false
+
+[binaries.tool]
+dns = true
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Resolve("other").DNS || !c.Resolve("tool").DNS {
+		t.Errorf("dns: other = %v, tool = %v", c.Resolve("other").DNS, c.Resolve("tool").DNS)
+	}
+	if !(&Config{}).Resolve("x").DNS {
+		t.Error("dns should default to true without a config file")
+	}
+}

@@ -24,9 +24,15 @@ import (
 	"github.com/deric/box/internal/sandbox"
 )
 
-// The _proxy, _forward and _pause commands are started by box itself (see
-// internal/proxy and internal/sandbox) and are not part of the documented
-// interface.
+// The _proxy, _forward, _netns and _pause commands are started by box
+// itself (see internal/proxy and internal/sandbox) and are not part of the
+// documented interface.
+
+// _netns drops its capabilities on the thread it then execs the runner
+// from, and the proxy's parent-death signal is bound to the thread box
+// forks it from; locking the main goroutine to the main thread keeps both
+// on the thread that outlives every exec.
+func init() { runtime.LockOSThread() }
 
 var version = "dev"
 
@@ -85,6 +91,8 @@ func main() {
 		err = cmdProxy(os.Args[2:])
 	case "_forward":
 		err = cmdForward(os.Args[2:])
+	case "_netns":
+		err = cmdNetns(os.Args[2:])
 	case "_pause":
 		sandbox.Pause()
 	case "version", "--version":
@@ -512,6 +520,7 @@ func cmdInfo(argv []string) error {
 		{"platform", runtime.GOOS + "/" + runtime.GOARCH},
 		{"isolation", runner},
 		{"limits", sandbox.LimitsInfo()},
+		{"dns", sandbox.DNSInfo()},
 		{"config", configPath + configNote},
 		{"state dir", stateDir},
 		{"tmp root", sandbox.DefaultTmpRoot},
