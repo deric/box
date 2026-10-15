@@ -32,8 +32,8 @@ box info                        # print version, isolation mechanism, config pat
 | `/usr`, `/bin`, `/lib*`, `/etc`  | read-only (merged-/usr symlinks are recreated)       |
 | current directory                | read-write                                           |
 | `/tmp`                           | private: a fresh host dir `/tmp/box/<name>-<pid>`    |
-| `/var/tmp`                       | empty tmpfs                                          |
-| `$HOME`                          | empty tmpfs; only listed paths underneath are visible |
+| `/var/tmp`                       | empty tmpfs, 1 GiB at most                           |
+| `$HOME`                          | empty tmpfs, 1 GiB at most; only listed paths underneath are visible |
 | `~/.local/share/mise`, `~/.local/bin` | overlay: host content visible, writes land in a per-binary upper layer under `~/.local/state/box/overlays/` |
 | `~/.claude` (claude only)        | temporary overlay: host content visible, writes discarded on exit; `projects/` and `.credentials.json` read-write |
 | `~/.claude/skills`, `~/.claude/plugins`, `~/.agents/skills` (claude only) | persistent overlays: the host's skills and plugins are visible, ones installed inside land in the per-binary upper layer |
@@ -43,10 +43,40 @@ box info                        # print version, isolation mechanism, config pat
 | PID, IPC, UTS, cgroup namespaces | unshared; hostname is `box`                          |
 | user namespaces                  | cannot be created inside (`--disable-userns`)        |
 | terminal                         | new session (`--new-session`)                        |
+| CPU, memory                      | 1 core and 2 GiB, no swap: a transient systemd scope (cgroup) of its own, see [Resource limits](#resource-limits) |
 | environment                      | cleared; only `pass_env` variables (`HOME`, `PATH`, `TERM`, `LANG`, `LC_*`, proxies, ...) and `BOX_SANDBOX=1` are set |
 
 Everything is driven by `--unshare-all`; `BOX_SANDBOX=1` lets programs detect
 they are sandboxed.
+
+### Resource limits
+
+Every sandbox runs in a cgroup of its own with a CPU and a memory limit
+(`cpus`, `memory`), and each tmpfs mount is capped in size (`tmpfs_size`).
+Since an unprivileged process cannot write the cgroup it was started in,
+`box` asks the systemd user manager for a transient scope unit named
+`box-<name>-<pid>.scope` with the limits as properties and its own PID as
+member, which is what `systemd-run --user --scope` does, and then replaces
+itself with `bwrap` as usual; the scope covers the sandboxed program,
+everything it starts and the host-side proxy, and ends with them.
+`box show` prints the equivalent `systemd-run` prefix in front of the
+`bwrap` command line, `box info` reports whether the user manager is
+reachable and which controllers are delegated to it, and
+`systemd-cgtop --user` or `systemctl --user status box-claude-1234.scope`
+show the usage. A memory limit comes with `MemorySwapMax=0`, so swap cannot
+stretch it: a sandbox that outgrows it is OOM-killed instead. Once the
+scope exists `box` reads the limits back from cgroupfs and warns about any
+the kernel does not show, which happens when a controller is not delegated
+to the user manager. Without a reachable user manager (no systemd, no
+session, nested `box`) it warns and runs without limits.
+
+`tmpfs_size` is passed as `bwrap --size` before every `--tmpfs`, so
+`$HOME` and `/var/tmp` (and podman's runtime directory) each hold at most
+that much. tmpfs lives in memory and counts towards `memory`, as does the
+root filesystem of the sandbox, which is a tmpfs too. The private `/tmp`
+is a host directory, which no unprivileged mechanism can cap; to bound it
+as well, set `private_tmp = false` and add `/tmp` to `tmpfs`, at the price
+of inspecting it from the host.
 
 ### Network
 
@@ -88,6 +118,9 @@ overlays = [{ path = "~/.local/share/mise", persist = true }, { path = "?~/.loca
 network  = false
 proxy    = true
 allow_hosts = ["github.com", "*.github.com", "registry.npmjs.org"]
+cpus     = 1
+memory   = "2G"
+tmpfs_size = "1G"
 hostname = "box"
 new_session    = true
 disable_userns = true
@@ -115,6 +148,11 @@ network     = true           # share the host network, no proxy
 [binaries.untrusted-tool]
 proxy      = false           # no network at all
 inherit    = true            # set false to ignore [default] entirely
+
+[binaries.build-tool]
+cpus       = 4               # more room: four cores, 8 GiB, no tmpfs cap
+memory     = "8G"
+tmpfs_size = ""
 ```
 
 Paths accept `~`, `$HOME`, `$PWD` (the directory `box` was started in) and any
@@ -145,6 +183,9 @@ with `?` to skip silently.
 | `unset_env`       | list              | variables to unset (also removes `pass_env` entries)           |
 | `bind_binary`     | bool              | mount the resolved executable if no other mount exposes it     |
 | `podman`          | bool              | set the sandbox up for rootless podman inside (see [Podman](#podman)); implies `disable_userns = false` |
+| `cpus`            | number            | CPU time per second in cores (`1.5` is one and a half); `0` lifts the limit |
+| `memory`          | string            | memory limit, swap excluded, as a size (`2G`, `512M`, `1.5G`, bytes); `""` lifts it |
+| `tmpfs_size`      | string            | size of each tmpfs mount, as a size; `""` leaves the kernel default |
 | `extra_args`      | list              | raw arguments appended to `bwrap` / `sandbox-exec`             |
 | `seatbelt_rules`  | list              | raw SBPL rules appended to the macOS profile                   |
 | `inherit`         | bool              | `false` ignores `[default]` for this binary                    |
@@ -195,9 +236,10 @@ this way; what does not work is running a container as another user
 and `RUN` steps share the sandbox's network namespace (`netns = "host"`),
 which has loopback and the proxy only, and inherit `HTTP_PROXY` and
 friends, so they reach `allow_hosts` like the sandboxed program itself; the
-defaults include Docker Hub, quay.io and ghcr.io. Cgroups are disabled, as
-none is delegated to the sandbox, so `--memory` and the like have no
-effect. Native (kernel) overlayfs is used for the store; `fuse-overlayfs`
+defaults include Docker Hub, quay.io and ghcr.io. Cgroups are disabled
+inside, as none is delegated to the sandbox, so `--memory` and the like
+have no effect; the sandbox's own `cpus` and `memory` limits cover the
+containers all the same. Native (kernel) overlayfs is used for the store; `fuse-overlayfs`
 would need `/dev/fuse` in `dev_binds` and a `storage.conf` of your own.
 
 ## macOS
@@ -218,6 +260,7 @@ the Linux sandbox as closely as Seatbelt allows:
 | Unix sockets under mounted paths      | Unix sockets under exposed paths                              |
 | PID / IPC namespaces                  | processes may only inspect and signal their own sandbox; Mach services are limited to a short list (name lookup, logging, and with network: DNS and TLS trust) |
 | `hostname`, `new_session`, `disable_userns` | not supported (warned and ignored)                      |
+| `cpus`, `memory`, `tmpfs_size`        | not supported (warned and ignored)                            |
 | `clear_env`, `pass_env`, `env`, `unset_env` | applied by `box` before starting `sandbox-exec`         |
 
 The macOS default config (written by `box init` on a Mac) exposes the system
@@ -239,6 +282,10 @@ release and is what other agent sandboxes build on.
 
 - macOS: nothing beyond the system's `/usr/bin/sandbox-exec`.
 - Linux with unprivileged user namespaces.
+- For `cpus` and `memory`: a systemd user manager on cgroups v2, reachable
+  through `$XDG_RUNTIME_DIR/systemd/private` or the session bus, with the
+  `cpu` and `memory` controllers delegated to it (systemd ≥ 239; every
+  current distribution). Otherwise `box` warns and runs without limits.
 - `bwrap` ≥ 0.8 for `disable_userns`, ≥ 0.10 for overlay mounts (uses
   `--overlay-src`, `--overlay`, `--tmp-overlay`).
   Overlays need a non-setuid `bwrap` and a kernel with unprivileged overlayfs (≥ 5.11).

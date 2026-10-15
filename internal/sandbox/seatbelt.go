@@ -97,6 +97,14 @@ func buildSeatbelt(prof config.Profile, opts Options, exe string) (*Plan, error)
 	if prof.DisableUserns {
 		plan.Warnings = append(plan.Warnings, "disable_userns is not supported by sandbox-exec; ignored")
 	}
+	if l, err := limits(prof); err != nil {
+		return nil, err
+	} else if l != nil {
+		plan.Warnings = append(plan.Warnings, "cpus and memory limits are not supported by sandbox-exec; ignored")
+	}
+	if prof.TmpfsSize != "" {
+		plan.Warnings = append(plan.Warnings, "tmpfs_size is not supported by sandbox-exec; ignored")
+	}
 
 	var b strings.Builder
 	b.WriteString(seatbeltBase)

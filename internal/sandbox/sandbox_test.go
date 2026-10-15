@@ -827,3 +827,82 @@ func TestBuildPodmanSeatbelt(t *testing.T) {
 		t.Errorf("want a warning about podman, got %v", plan.Warnings)
 	}
 }
+
+func TestBuildLimits(t *testing.T) {
+	home, cwd, _, bin := fixture(t)
+	opts := Options{
+		Binary: "tool", Cwd: cwd, Home: home, ID: "42",
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}
+	prof := config.Profile{Tmpfs: []string{"$HOME", "/var/tmp"}, CPUs: 1.5, Memory: "2G", TmpfsSize: "512M"}
+	plan, err := buildBwrap(prof, opts, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Limits == nil || plan.Limits.CPUs != 1.5 || plan.Limits.Memory != 2<<30 {
+		t.Fatalf("Limits = %+v", plan.Limits)
+	}
+	if plan.Scope != "box-tool-42.scope" {
+		t.Errorf("Scope = %q", plan.Scope)
+	}
+	args := " " + strings.Join(plan.Args, " ") + " "
+	for _, want := range []string{" --size 536870912 --tmpfs " + home + " ", " --size 536870912 --tmpfs /var/tmp "} {
+		if !strings.Contains(args, want) {
+			t.Errorf("missing %q in\n%s", want, args)
+		}
+	}
+	if strings.Contains(args, "systemd-run") {
+		t.Error("the scope is not part of the bwrap arguments")
+	}
+	cmd := plan.Command()
+	if !strings.HasPrefix(cmd, "systemd-run --user --scope --quiet --unit box-tool-42.scope -p MemoryMax=2147483648 -p MemorySwapMax=0 -p CPUQuota=150% -- bwrap ") {
+		t.Errorf("Command() = %s", cmd)
+	}
+
+	// Either limit alone; none at all.
+	plan, err = buildBwrap(config.Profile{Tmpfs: []string{"$HOME"}, Memory: "1G"}, opts, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if props := plan.Limits.Properties(); strings.Join(props, " ") != "MemoryMax=1073741824 MemorySwapMax=0" {
+		t.Errorf("Properties() = %v", props)
+	}
+	if args := strings.Join(plan.Args, " "); strings.Contains(args, "--size") {
+		t.Errorf("unexpected --size without tmpfs_size in %s", args)
+	}
+	plan, err = buildBwrap(config.Profile{CPUs: 0.5}, opts, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if props := plan.Limits.Properties(); strings.Join(props, " ") != "CPUQuota=50%" {
+		t.Errorf("Properties() = %v", props)
+	}
+	plan, err = buildBwrap(config.Profile{}, opts, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Limits != nil || plan.Scope != "" || strings.HasPrefix(plan.Command(), "systemd-run") {
+		t.Errorf("unexpected limits: %+v %q %s", plan.Limits, plan.Scope, plan.Command())
+	}
+
+	// Bad values are errors, not silently dropped limits.
+	for _, bad := range []config.Profile{{Memory: "lots"}, {CPUs: -1}, {TmpfsSize: "1X"}} {
+		if _, err := buildBwrap(bad, opts, "bwrap"); err == nil {
+			t.Errorf("profile %+v: want an error", bad)
+		}
+	}
+}
+
+func TestScopeName(t *testing.T) {
+	for name, want := range map[string]string{
+		"claude":       "box-claude-7.scope",
+		"my_tool.v2":   "box-my_tool.v2-7.scope",
+		"weird name/é": `box-weird\x20name\x2f\xc3\xa9-7.scope`,
+		".hidden":      `box-\x2ehidden-7.scope`,
+		"a:b-c":        "box-a:b-c-7.scope",
+	} {
+		if got := ScopeName(name, "7"); got != want {
+			t.Errorf("ScopeName(%q) = %q, want %q", name, got, want)
+		}
+	}
+}

@@ -367,3 +367,60 @@ func TestDefaultTOMLPodman(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultTOMLLimits(t *testing.T) {
+	c, err := Parse(DefaultLinuxTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := c.Resolve("anything")
+	if p.CPUs != 1 || p.Memory != "2G" || p.TmpfsSize != "1G" {
+		t.Errorf("default limits: cpus=%v memory=%q tmpfs_size=%q", p.CPUs, p.Memory, p.TmpfsSize)
+	}
+	c, err = Parse(`
+[default]
+cpus = 2
+memory = "4G"
+tmpfs_size = "1G"
+[binaries.big]
+cpus = 0
+memory = ""
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := c.Resolve("big"); p.CPUs != 0 || p.Memory != "" || p.TmpfsSize != "1G" {
+		t.Errorf("override: cpus=%v memory=%q tmpfs_size=%q", p.CPUs, p.Memory, p.TmpfsSize)
+	}
+	if p := (&Config{}).Resolve("x"); p.CPUs != 0 || p.Memory != "" || p.TmpfsSize != "" {
+		t.Errorf("unset limits are off: cpus=%v memory=%q tmpfs_size=%q", p.CPUs, p.Memory, p.TmpfsSize)
+	}
+}
+
+func TestParseSize(t *testing.T) {
+	for in, want := range map[string]uint64{
+		"":           0,
+		"0":          0,
+		"1024":       1024,
+		"2G":         2 << 30,
+		"2g":         2 << 30,
+		"2GB":        2 << 30,
+		"2GiB":       2 << 30,
+		"512M":       512 << 20,
+		"1.5G":       3 << 29,
+		"100K":       100 << 10,
+		"1T":         1 << 40,
+		" 8M ":       8 << 20,
+		"1073741824": 1 << 30,
+	} {
+		got, err := ParseSize(in)
+		if err != nil || got != want {
+			t.Errorf("ParseSize(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"lots", "-1", "+2G", "2X", "G", "1.5.2G", "99999999999999999999G"} {
+		if got, err := ParseSize(bad); err == nil {
+			t.Errorf("ParseSize(%q) = %d, want an error", bad, got)
+		}
+	}
+}

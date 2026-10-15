@@ -17,6 +17,12 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	if plan.Limits, err = limits(prof); err != nil {
+		return nil, err
+	}
+	if plan.Limits != nil {
+		plan.Scope = ScopeName(plan.Name, opts.ID)
+	}
 
 	args := []string{"--unshare-all"}
 	if prof.Network {
@@ -104,10 +110,14 @@ func (m *mount) args() []string {
 	case kindDev:
 		return []string{"--dev-bind", m.src, m.dest}
 	case kindTmpfs:
+		var args []string
 		if m.mode != 0 {
-			return []string{"--perms", fmt.Sprintf("%04o", m.mode), "--tmpfs", m.dest}
+			args = append(args, "--perms", fmt.Sprintf("%04o", m.mode))
 		}
-		return []string{"--tmpfs", m.dest}
+		if m.size != 0 {
+			args = append(args, "--size", strconv.FormatUint(m.size, 10))
+		}
+		return append(args, "--tmpfs", m.dest)
 	case kindSymlink:
 		return []string{"--symlink", m.src, m.dest}
 	case kindOverlay:
