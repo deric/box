@@ -38,7 +38,7 @@ box info                        # print version, isolation mechanism, config pat
 | `~/.claude` (claude only)        | temporary overlay: host content visible, writes discarded on exit; `projects/` and `.credentials.json` read-write |
 | `~/.claude/skills`, `~/.claude/plugins`, `~/.agents/skills` (claude only) | persistent overlays: the host's skills and plugins are visible, ones installed inside land in the per-binary upper layer |
 | `~/.claude.json` (claude only)   | private copy of the host file                        |
-| network                          | own empty namespace; HTTP(S) only through an allowlisting proxy on the host (`allow_hosts`) |
+| network                          | own empty namespace; HTTP(S) only through an allowlisting proxy on the host (`allow_hosts`); DNS through the proxy to the host's resolver (`dns`) |
 | `/proc`, `/dev`                  | fresh, minimal                                       |
 | PID, IPC, UTS, cgroup namespaces | unshared; hostname is `box`                          |
 | user namespaces                  | cannot be created inside (`--disable-userns`)        |
@@ -99,6 +99,21 @@ services on the host. Programs that ignore the proxy variables have no
 network at all. `box show` prints the proxy command along with the `bwrap`
 command line.
 
+Name resolution works inside anyway (`dns = true`, the default): the sandbox's
+`/etc/resolv.conf` names `127.0.0.1`, where `box` answers DNS and relays
+every query through the same proxy to the nameservers of the host's
+`/etc/resolv.conf`, over UDP or TCP as the query came in. Nothing inside a
+`bwrap` sandbox may bind port 53, so `box` creates the sandbox's network
+namespace itself: it runs `unshare -U -n --keep-caps` (util-linux) first,
+binds the listeners there with `box _netns`, drops its capabilities and only
+then starts `bwrap` with `--share-net`; the sandboxed program has no
+capabilities, as before, and the listeners are served by the `box _forward`
+wrapper inside. The answers are not filtered: a program can look up any
+name, although it can only connect to `allow_hosts`. Set `dns = false` to
+leave a sandbox without a resolver, which closes that channel. Where the
+namespaces cannot be set up (no `unshare`, user namespaces disabled) `box`
+warns and runs the sandbox without DNS; `box info` reports what it found.
+
 ## Configuration
 
 `box init` writes a commented default file. If the file already exists it is
@@ -117,6 +132,7 @@ private_tmp = true
 overlays = [{ path = "~/.local/share/mise", persist = true }, { path = "?~/.local/bin", persist = true }]
 network  = false
 proxy    = true
+dns      = true
 allow_hosts = ["github.com", "*.github.com", "registry.npmjs.org"]
 cpus     = 1
 memory   = "2G"
@@ -148,6 +164,9 @@ network     = true           # share the host network, no proxy
 [binaries.untrusted-tool]
 proxy      = false           # no network at all
 inherit    = true            # set false to ignore [default] entirely
+
+[binaries.quiet-tool]
+dns        = false           # proxy only, no name resolution
 
 [binaries.build-tool]
 cpus       = 4               # more room: four cores, 8 GiB, no tmpfs cap
@@ -305,6 +324,9 @@ go install github.com/deric/box/cmd/box@latest
 ```
 sudo apt install bubblewrap
 ```
+
+DNS inside sandboxes needs `unshare` from util-linux 2.37 or newer, which
+every distribution installs by default.
 
 ## Development
 

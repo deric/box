@@ -5,7 +5,8 @@
 // on a unix socket that is bound into the sandbox; inside, Forward accepts
 // TCP connections on loopback and relays them to that socket. Programs use
 // it through HTTP_PROXY / HTTPS_PROXY, and only hosts on the allowlist can
-// be reached.
+// be reached. Name resolution takes the same path: DNSForwarder serves DNS
+// inside and relays the queries to the Server's Resolver (see dns.go).
 package proxy
 
 import (
@@ -51,6 +52,9 @@ func (a Allowlist) Match(host string) (allowed, exact bool) {
 // restricted to Allow.
 type Server struct {
 	Allow Allowlist
+	// DNS, when set, answers queries relayed from the sandbox (see
+	// DNSForwarder); nil refuses them.
+	DNS *Resolver
 	// Log receives denied and failed requests; nil discards them.
 	Log *log.Logger
 	// DialTimeout bounds connecting to a destination; zero means 30s.
@@ -94,6 +98,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.init()
 	if r.Method == http.MethodConnect {
 		s.connect(w, r)
+		return
+	}
+	if !r.URL.IsAbs() && r.URL.Path == DNSPath {
+		if s.DNS == nil {
+			http.Error(w, "box proxy: DNS is disabled for this sandbox", http.StatusForbidden)
+			return
+		}
+		s.dns(w, r)
 		return
 	}
 	if !r.URL.IsAbs() {

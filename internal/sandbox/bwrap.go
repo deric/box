@@ -25,7 +25,8 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 	}
 
 	args := []string{"--unshare-all"}
-	if prof.Network {
+	if prof.Network || plan.DNS != nil {
+		// With DNS the network namespace is the one `box _netns` runs in.
 		args = append(args, "--share-net")
 	}
 	if prof.DisableUserns {
@@ -88,6 +89,9 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 		if plan.Proxy != nil {
 			args = append(args, "-s", ProxySocket, "-l", ProxyAddr)
 		}
+		if plan.DNS != nil {
+			args = append(args, "-u", strconv.Itoa(plan.DNS.UDPFD), "-t", strconv.Itoa(plan.DNS.TCPFD))
+		}
 		if plan.Pause != "" {
 			args = append(args, "-p", plan.Pause)
 		}
@@ -127,6 +131,8 @@ func (m *mount) args() []string {
 		return []string{"--overlay-src", m.src, "--overlay", m.upper, m.work, m.dest}
 	case kindFile:
 		return []string{"--perms", fmt.Sprintf("%04o", m.mode), "--file", strconv.Itoa(m.fd), m.dest}
+	case kindData:
+		return []string{"--perms", fmt.Sprintf("%04o", m.mode), "--ro-bind-data", strconv.Itoa(m.fd), m.dest}
 	}
 	return nil
 }

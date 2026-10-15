@@ -97,6 +97,7 @@ type Section struct {
 	PrivateTmp    *bool             `toml:"private_tmp"`
 	Network       *bool             `toml:"network"`
 	Proxy         *bool             `toml:"proxy"`
+	DNS           *bool             `toml:"dns"`
 	AllowHosts    []string          `toml:"allow_hosts"`
 	LogDir        *string           `toml:"log_dir"`
 	Hostname      *string           `toml:"hostname"`
@@ -129,16 +130,21 @@ const DefaultLogDir = "/tmp/box"
 
 // Profile is the fully resolved configuration for one binary.
 type Profile struct {
-	ROBinds       []string          `toml:"ro_binds"`
-	RWBinds       []string          `toml:"rw_binds"`
-	DevBinds      []string          `toml:"dev_binds"`
-	Tmpfs         []string          `toml:"tmpfs"`
-	Overlays      []Overlay         `toml:"overlays"`
-	CopyFiles     []string          `toml:"copy_files"`
-	SyncFiles     []string          `toml:"sync_files"`
-	PrivateTmp    bool              `toml:"private_tmp"`
-	Network       bool              `toml:"network"`
-	Proxy         bool              `toml:"proxy"`
+	ROBinds    []string  `toml:"ro_binds"`
+	RWBinds    []string  `toml:"rw_binds"`
+	DevBinds   []string  `toml:"dev_binds"`
+	Tmpfs      []string  `toml:"tmpfs"`
+	Overlays   []Overlay `toml:"overlays"`
+	CopyFiles  []string  `toml:"copy_files"`
+	SyncFiles  []string  `toml:"sync_files"`
+	PrivateTmp bool      `toml:"private_tmp"`
+	Network    bool      `toml:"network"`
+	Proxy      bool      `toml:"proxy"`
+	// DNS lets a sandbox behind the proxy resolve names: a listener on
+	// 127.0.0.1:53 inside relays queries through the proxy to the host's
+	// resolver (see package sandbox). It has no effect with Network set
+	// or Proxy unset.
+	DNS           bool              `toml:"dns"`
 	AllowHosts    []string          `toml:"allow_hosts"`
 	LogDir        string            `toml:"log_dir"`
 	Hostname      string            `toml:"hostname"`
@@ -353,6 +359,7 @@ func (c *Config) Resolve(name string) Profile {
 		PrivateTmp:    pick(base.PrivateTmp, sec.PrivateTmp, false),
 		Network:       pick(base.Network, sec.Network, true),
 		Proxy:         pick(base.Proxy, sec.Proxy, false),
+		DNS:           pick(base.DNS, sec.DNS, true),
 		AllowHosts:    mergeList(base.AllowHosts, sec.AllowHosts, nil),
 		LogDir:        pick(base.LogDir, sec.LogDir, DefaultLogDir),
 		Hostname:      pick(base.Hostname, sec.Hostname, ""),
