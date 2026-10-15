@@ -5,7 +5,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -34,13 +33,6 @@ var probeNetns = func(unshare, self string) error {
 		return fmt.Errorf("%s", msg)
 	}
 	return nil
-}
-
-// unshareArgs returns the unshare(1) arguments that put the current process
-// into a user namespace mapping only uid and gid, with its capabilities
-// kept, and a network namespace of its own (see DNS).
-func unshareArgs(uid, gid int) []string {
-	return []string{"-U", "-n", "--map-user=" + strconv.Itoa(uid), "--map-group=" + strconv.Itoa(gid), "--keep-caps", "--"}
 }
 
 // PrepareDNS is the body of `box _netns`, run in the user and network

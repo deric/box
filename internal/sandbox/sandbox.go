@@ -302,6 +302,13 @@ func (p *Plan) Command() string {
 	return strings.Join(parts, " ")
 }
 
+// unshareArgs returns the unshare(1) arguments that put the current process
+// into a user namespace mapping only uid and gid, with its capabilities
+// kept, and a network namespace of its own (see DNS).
+func unshareArgs(uid, gid int) []string {
+	return []string{"-U", "-n", "--map-user=" + strconv.Itoa(uid), "--map-group=" + strconv.Itoa(gid), "--keep-caps", "--"}
+}
+
 // netnsArgs returns the arguments of unshare(1) that run `box _netns`, which
 // prepares DNS and then execs the runner: the unshare options, then the
 // _netns command line up to and including its "--" (see DNS).

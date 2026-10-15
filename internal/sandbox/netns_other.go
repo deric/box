@@ -11,8 +11,6 @@ var lookupUnshare = func() (string, error) { return "", errors.New("not supporte
 
 var probeNetns = func(unshare, self string) error { return errors.New("not supported on this platform") }
 
-func unshareArgs(uid, gid int) []string { return nil }
-
 // PrepareDNS is only used on Linux.
 func PrepareDNS(udpFD, tcpFD int) error { return errors.New("not supported on this platform") }
 

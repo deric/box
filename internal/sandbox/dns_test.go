@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,6 +44,9 @@ func TestBuildDNS(t *testing.T) {
 	if err := os.Symlink("../run/resolve/stub-resolv.conf", link); err != nil {
 		t.Fatal(err)
 	}
+	// The mount lands on the resolved path (on macOS the temporary
+	// directory itself sits behind a symlink).
+	target = realPath(target)
 	defer stub(&resolvConf, link)()
 	defer stub(&lookupUnshare, func() (string, error) { return "/usr/bin/unshare", nil })()
 	var probed []string
@@ -78,7 +82,7 @@ func TestBuildDNS(t *testing.T) {
 		t.Errorf("resolv.conf = %q, want %q", plan.Data[dataFD], wantConf)
 	}
 	// The runner reads the content from the descriptor, up to EOF.
-	got, err := os.ReadFile("/proc/self/fd/" + strconv.Itoa(dataFD))
+	got, err := io.ReadAll(os.NewFile(uintptr(dataFD), "resolv.conf"))
 	if err != nil || string(got) != wantConf {
 		t.Errorf("fd %d holds %q, %v", dataFD, got, err)
 	}
