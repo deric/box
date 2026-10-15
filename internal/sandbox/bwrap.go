@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -65,13 +66,24 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 			}
 		}
 	}
+	if prof.Podman {
+		for _, kv := range podmanEnv(os.Getuid(), PodmanDir(opts.StateDir, plan.Name)) {
+			if _, set := prof.Env[kv[0]]; !set {
+				args = append(args, "--setenv", kv[0], kv[1])
+			}
+		}
+	}
 	args = append(args, prof.ExtraArgs...)
-	if plan.Proxy != nil || len(plan.Sync) > 0 {
-		// The forwarder exposes the proxy socket on loopback and writes
-		// sync_files back on exit, running the command as its child.
+	if plan.needsForwarder() {
+		// The forwarder exposes the proxy socket on loopback, keeps
+		// podman's pause process and writes sync_files back on exit,
+		// running the command as its child.
 		args = append(args, "--", plan.Self, "_forward")
 		if plan.Proxy != nil {
 			args = append(args, "-s", ProxySocket, "-l", ProxyAddr)
+		}
+		if plan.Pause != "" {
+			args = append(args, "-p", plan.Pause)
 		}
 		for _, sf := range plan.Sync {
 			args = append(args, "-w", sf.Arg())
@@ -92,6 +104,9 @@ func (m *mount) args() []string {
 	case kindDev:
 		return []string{"--dev-bind", m.src, m.dest}
 	case kindTmpfs:
+		if m.mode != 0 {
+			return []string{"--perms", fmt.Sprintf("%04o", m.mode), "--tmpfs", m.dest}
+		}
 		return []string{"--tmpfs", m.dest}
 	case kindSymlink:
 		return []string{"--symlink", m.src, m.dest}

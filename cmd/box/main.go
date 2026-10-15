@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -23,8 +24,9 @@ import (
 	"github.com/deric/box/internal/sandbox"
 )
 
-// The _proxy and _forward commands are started by box itself (see
-// internal/proxy) and are not part of the documented interface.
+// The _proxy, _forward and _pause commands are started by box itself (see
+// internal/proxy and internal/sandbox) and are not part of the documented
+// interface.
 
 var version = "dev"
 
@@ -35,8 +37,8 @@ Usage:
   box show [-c FILE] <command> [args...]             print the sandbox command line
   box config [-c FILE] [<command>]                   print the effective profile
   box init [-f] [-c FILE]                            write the default config file
-  box clean [-c FILE] [<command>]                    delete overlay layers, stale /tmp dirs and logs
-  box df [-a] [-c FILE] [<command>]                  show disk usage of overlay layers, /tmp dirs and logs
+  box clean [-c FILE] [<command>]                    delete overlay layers, podman images, stale /tmp dirs and logs
+  box df [-a] [-c FILE] [<command>]                  show disk usage of overlay layers, podman images, /tmp dirs and logs
   box ps [<command>]                                 list running sandboxes
   box top [-i DURATION] [-c FILE] [<command>]        watch running sandboxes and denied connections
   box info [-c FILE]                                 print version, isolation mechanism, config path, log dir
@@ -47,7 +49,7 @@ Flags:
   -v, --verbose   print the sandbox command before running it
   -c, --config    configuration file (default $BOX_CONFIG or ~/.config/box/box.toml)
   -i, --interval  refresh interval of box top (default 1s)
-  -a, --all       list every overlay layer, /tmp dir and log in box df
+  -a, --all       list every overlay layer, podman dir, /tmp dir and log in box df
   -f, --force     overwrite an existing config file in box init
 
 Keys in box top:
@@ -83,6 +85,8 @@ func main() {
 		err = cmdProxy(os.Args[2:])
 	case "_forward":
 		err = cmdForward(os.Args[2:])
+	case "_pause":
+		sandbox.Pause()
 	case "version", "--version":
 		fmt.Println("box", version)
 	case "help", "-h", "--help":
@@ -157,6 +161,9 @@ func cmdRun(argv []string, dryRun bool) error {
 		fmt.Fprintln(os.Stderr, "box: warning:", w)
 	}
 	if dryRun {
+		for _, f := range plan.WrittenFiles() {
+			fmt.Println("# written on the host first:", f)
+		}
 		if pc := plan.ProxyCommand(); pc != "" {
 			fmt.Println("# started on the host first:", pc)
 		}
@@ -256,13 +263,15 @@ func cmdClean(argv []string) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(stateDir, "overlays")
-	if filter != "" {
-		dir = filepath.Join(dir, filter)
-	}
 	removed := 0
-	if _, err := os.Stat(dir); err == nil {
-		if err := os.RemoveAll(dir); err != nil {
+	for _, dir := range []string{filepath.Join(stateDir, "overlays"), sandbox.PodmanRoot(stateDir)} {
+		if filter != "" {
+			dir = filepath.Join(dir, filter)
+		}
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		if err := removeTree(dir); err != nil {
 			return err
 		}
 		fmt.Println("removed", dir)
@@ -280,6 +289,29 @@ func cmdClean(argv []string) error {
 		fmt.Println("nothing to clean")
 	}
 	return nil
+}
+
+// removeTree deletes dir and everything below it. Image layers in a podman
+// store keep directories without write (or read) permission for their
+// owner, which os.RemoveAll cannot enter; on failure every directory is
+// made accessible and the removal is retried.
+func removeTree(dir string) error {
+	err := os.RemoveAll(dir)
+	if err == nil {
+		return nil
+	}
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if info, err := d.Info(); err == nil && info.Mode().Perm()&0o700 != 0o700 {
+				_ = os.Chmod(p, info.Mode().Perm()|0o700)
+			}
+		}
+		return nil
+	})
+	return os.RemoveAll(dir)
 }
 
 // logDirs returns the proxy log directories cfg uses, the default section's

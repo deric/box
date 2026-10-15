@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -632,5 +634,196 @@ func TestLookupRunner(t *testing.T) {
 	}
 	if want == "bwrap" && r.Version == "" {
 		t.Fatalf("Version is empty for %s", r.Exe)
+	}
+}
+
+func TestBuildPodman(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("bwrap plans are built on linux only")
+	}
+	home, cwd, _, bin := fixture(t)
+	self := filepath.Join(filepath.Dir(bin), "box")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(filepath.Dir(home), "state")
+	prof := config.Profile{
+		ROBinds: []string{"/etc"},
+		Tmpfs:   []string{"$HOME"},
+		Podman:  true,
+		Env:     map[string]string{"CONTAINERS_STORAGE_CONF": "/custom/storage.conf"},
+	}
+	plan, err := buildBwrap(prof, Options{
+		Binary: "tool", Args: []string{"--flag"}, Cwd: cwd, Home: home, StateDir: state, Self: self,
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(state, "podman", "tool")
+	if !slices.Contains(plan.Dirs, dir) {
+		t.Errorf("Dirs = %v, want the podman state dir %s", plan.Dirs, dir)
+	}
+	runtimeDir := RuntimeDir(os.Getuid())
+	pause := PausePidFile(os.Getuid())
+	if plan.Pause != pause || !strings.HasPrefix(pause, runtimeDir+"/") {
+		t.Errorf("Pause = %q, want %q under %s", plan.Pause, pause, runtimeDir)
+	}
+	cmd := " " + strings.Join(plan.Args, " ") + " "
+	for _, want := range []string{
+		" --bind " + dir + " " + dir + " ",
+		" --ro-bind /sys /sys ",
+		" --perms 0700 --tmpfs " + runtimeDir + " ",
+		" --setenv XDG_RUNTIME_DIR " + runtimeDir + " ",
+		" --setenv CONTAINERS_CONF_OVERRIDE " + dir + "/containers.conf ",
+		" --setenv CONTAINERS_STORAGE_CONF /custom/storage.conf ",
+		// The forwarder creates podman's pause process inside.
+		" --ro-bind " + self + " " + self + " ",
+		" -- " + self + " _forward -p " + pause + " -- tool --flag ",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("missing %q in\n%s", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, "--disable-userns") {
+		t.Error("podman needs user namespaces; --disable-userns must not be passed")
+	}
+	if strings.Count(cmd, " --setenv CONTAINERS_STORAGE_CONF ") != 1 {
+		t.Errorf("an explicit env entry must replace the generated one:\n%s", cmd)
+	}
+	if strings.Index(cmd, " --tmpfs "+home+" ") > strings.Index(cmd, " --bind "+dir+" ") {
+		t.Error("the state dir must be bound after the tmpfs on $HOME is mounted")
+	}
+	if strings.Contains(cmd, " --file ") || len(plan.Files) != 0 {
+		t.Errorf("generated files must be bound from the host, not copied in:\n%s", cmd)
+	}
+
+	// The subordinate ID files are hidden behind an empty host file, which
+	// must be bound after /etc.
+	subid := filepath.Join(dir, "subid")
+	for _, f := range []string{"/etc/subuid", "/etc/subgid"} {
+		bind := " --ro-bind " + subid + " " + f + " "
+		if fi, err := os.Stat(f); err == nil && fi.Mode().IsRegular() {
+			if !strings.Contains(cmd, bind) {
+				t.Errorf("missing %q in\n%s", bind, cmd)
+			} else if strings.Index(cmd, " --ro-bind /etc /etc ") > strings.Index(cmd, bind) {
+				t.Errorf("%s must be bound after /etc", f)
+			}
+		} else if strings.Contains(cmd, bind) {
+			t.Errorf("%s does not exist on the host and cannot be bound over", f)
+		}
+	}
+
+	// The generated files are written before running.
+	want := []string{filepath.Join(dir, "containers.conf"), filepath.Join(dir, "storage.conf"), subid}
+	if got := plan.WrittenFiles(); !slices.Equal(got, want) {
+		t.Errorf("WrittenFiles() = %v, want %v", got, want)
+	}
+	if plan.Writes[subid] != "" {
+		t.Errorf("subid must be empty, got %q", plan.Writes[subid])
+	}
+	store := plan.Writes[filepath.Join(dir, "storage.conf")]
+	if !strings.Contains(store, "graphroot = "+strconv.Quote(filepath.Join(dir, "storage"))) ||
+		!strings.Contains(store, `ignore_chown_errors = "true"`) {
+		t.Errorf("storage.conf:\n%s", store)
+	}
+	conf := plan.Writes[filepath.Join(dir, "containers.conf")]
+	for _, want := range []string{`netns = "host"`, `cgroups = "disabled"`, `cgroup_manager = "cgroupfs"`} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("containers.conf is missing %q:\n%s", want, conf)
+		}
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(subid, []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.writeFiles(); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range plan.Writes {
+		if data, err := os.ReadFile(path); err != nil || string(data) != content {
+			t.Errorf("%s: %q, %v; want %q", path, data, err, content)
+		}
+	}
+
+	if _, err := buildBwrap(prof, Options{
+		Binary: "tool", Cwd: cwd, Home: home, Self: self,
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}, "bwrap"); err == nil || !strings.Contains(err.Error(), "state directory") {
+		t.Errorf("without a state directory, want an error, got %v", err)
+	}
+}
+
+func TestStartPause(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the pause process is started on linux only")
+	}
+	root := t.TempDir()
+	// A stand-in for the box binary; `_pause` is ignored and it sleeps.
+	self := filepath.Join(root, "box")
+	if err := os.WriteFile(self, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pidFile := filepath.Join(root, "run", "libpod", "tmp", "pause.pid")
+	cmd, err := StartPause(self, pidFile)
+	if err != nil {
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EINVAL) {
+			t.Skipf("user namespaces are not available here: %v", err)
+		}
+		t.Fatal(err)
+	}
+	defer StopPause(cmd)
+	pid := cmd.Process.Pid
+	data, err := os.ReadFile(pidFile)
+	if err != nil || string(data) != strconv.Itoa(pid) {
+		t.Errorf("pid file: %q, %v; want %d", data, err, pid)
+	}
+	proc := "/proc/" + strconv.Itoa(pid)
+	// The user namespace maps the current user and group to root, with
+	// setgroups denied, as podman expects of its pause process.
+	for _, c := range []struct{ file, want string }{
+		{"uid_map", fmt.Sprintf("         0 %10d          1\n", os.Getuid())},
+		{"gid_map", fmt.Sprintf("         0 %10d          1\n", os.Getgid())},
+		{"setgroups", "deny\n"},
+	} {
+		if data, err := os.ReadFile(filepath.Join(proc, c.file)); err != nil || string(data) != c.want {
+			t.Errorf("%s: %q, %v; want %q", c.file, data, err, c.want)
+		}
+	}
+	for _, ns := range []string{"user", "mnt"} {
+		own, err := os.Readlink("/proc/self/ns/" + ns)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.Readlink(filepath.Join(proc, "ns", ns)); err != nil || got == own {
+			t.Errorf("%s namespace: %q, %v; want one of its own (not %q)", ns, got, err, own)
+		}
+	}
+	// A second start must not overwrite the file.
+	if _, err := StartPause(self, pidFile); err == nil || !errors.Is(err, os.ErrExist) {
+		t.Errorf("second start: %v, want an exists error", err)
+	}
+	StopPause(cmd)
+	if err := cmd.Process.Signal(syscall.Signal(0)); err == nil {
+		t.Error("the pause process is still running after StopPause")
+	}
+}
+
+func TestBuildPodmanSeatbelt(t *testing.T) {
+	home, cwd, _, bin := fixture(t)
+	plan, err := buildSeatbelt(config.Profile{Podman: true, RWBinds: []string{"$PWD"}}, Options{
+		Binary: "tool", Cwd: cwd, Home: home,
+		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
+	}, "sandbox-exec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Writes) != 0 || len(plan.Dirs) != 0 {
+		t.Errorf("podman must be ignored on macOS: Writes %v Dirs %v", plan.Writes, plan.Dirs)
+	}
+	if !slices.ContainsFunc(plan.Warnings, func(w string) bool { return strings.Contains(w, "podman") }) {
+		t.Errorf("want a warning about podman, got %v", plan.Warnings)
 	}
 }

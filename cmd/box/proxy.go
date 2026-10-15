@@ -85,12 +85,15 @@ func cmdProxy(argv []string) error {
 
 // cmdForward runs inside the sandbox as the parent of the command, passing
 // its exit status through. With -s it listens on loopback and relays to the
-// proxy socket; each -w path=mount names a sync_files copy that is written
-// back over its host original (bound at mount) once the command exits.
+// proxy socket; with -p it keeps podman's pause process, whose PID it writes
+// to the given file; each -w path=mount names a sync_files copy that is
+// written back over its host original (bound at mount) once the command
+// exits.
 func cmdForward(argv []string) error {
 	fs := flag.NewFlagSet("_forward", flag.ExitOnError)
 	sock := fs.String("s", "", "proxy unix socket (no proxy when empty)")
 	addr := fs.String("l", sandbox.ProxyAddr, "address to listen on")
+	pausePid := fs.String("p", "", "PID file of the podman pause process to keep (none when empty)")
 	var syncArgs stringList
 	fs.Var(&syncArgs, "w", "sync file as path=mount (repeatable)")
 	if err := fs.Parse(argv); err != nil {
@@ -118,6 +121,19 @@ func cmdForward(argv []string) error {
 		go func() { _ = proxy.Forward(ln, *sock) }()
 	}
 
+	// Without the pause process podman still runs, creating a namespace of
+	// its own (noisily); the command is not held up by that.
+	var pause *exec.Cmd
+	if *pausePid != "" {
+		self, err := os.Executable()
+		if err == nil {
+			pause, err = sandbox.StartPause(self, *pausePid)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "box: warning:", err)
+		}
+	}
+
 	cmd := exec.Command(fs.Arg(0), fs.Args()[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	// Terminal-generated signals reach the child directly as part of the
@@ -137,6 +153,7 @@ func cmdForward(argv []string) error {
 	if ln != nil {
 		_ = ln.Close()
 	}
+	sandbox.StopPause(pause)
 	warnings, serr := syncer.WriteBack()
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stderr, "box: warning:", w)

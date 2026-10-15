@@ -16,8 +16,9 @@ box run claude                  # start `claude` in a sandbox
 box run claude --some-flag      # run claude sandboxed
 box show claude                 # print the sandbox command line without running it
 box config claude               # print the effective, merged profile
-box clean claude                # drop claude's overlay layers and stale private /tmp dirs
-box df                          # disk usage per binary: overlay layers, private /tmp dirs, logs
+box run podman build -t app .   # build an image in a sandbox of its own (see Podman)
+box clean claude                # drop claude's overlay layers, podman images and stale private /tmp dirs
+box df                          # disk usage per binary: overlay layers, podman images, private /tmp dirs, logs
 box df -a claude                # the same listing every layer, /tmp dir and log of claude
 box ps                          # list running sandboxes with process count, CPU, memory
 box top                         # the same as a live view that refreshes every second, plus what the proxy denied
@@ -143,6 +144,7 @@ with `?` to skip silently.
 | `env`             | table             | variables to set                                               |
 | `unset_env`       | list              | variables to unset (also removes `pass_env` entries)           |
 | `bind_binary`     | bool              | mount the resolved executable if no other mount exposes it     |
+| `podman`          | bool              | set the sandbox up for rootless podman inside (see [Podman](#podman)); implies `disable_userns = false` |
 | `extra_args`      | list              | raw arguments appended to `bwrap` / `sandbox-exec`             |
 | `seatbelt_rules`  | list              | raw SBPL rules appended to the macOS profile                   |
 | `inherit`         | bool              | `false` ignores `[default]` for this binary                    |
@@ -150,6 +152,53 @@ with `?` to skip silently.
 Locations: config at `$BOX_CONFIG`, else `$XDG_CONFIG_HOME/box/box.toml`, else
 `~/.config/box/box.toml`; overlay layers at `$XDG_STATE_HOME/box`, else
 `~/.local/state/box`.
+
+## Podman
+
+With `podman = true` a sandbox can run rootless `podman` (and `buildah`),
+so an agent can build and run containers without leaving it. The built-in
+`[binaries.podman]` section enables it for `box run podman ...`; add
+`podman = true` to `[binaries.claude]` to let Claude Code build containers
+from inside its sandbox. `box` then:
+
+- leaves user namespaces enabled (`disable_userns = false`), since rootless
+  podman runs inside a user namespace of its own, and creates that
+  namespace for it: the `box _forward` wrapper that runs the command
+  starts a pause process in a new user and mount namespace (the sandbox
+  user mapped to root) and writes its PID to
+  `$XDG_RUNTIME_DIR/libpod/tmp/pause.pid`, which podman joins on every
+  invocation;
+- mounts `/sys` read-only, which the OCI runtime bind-mounts into containers;
+- binds `~/.local/state/box/podman/<name>` read-write at the same path:
+  it holds the per-binary image store (`storage/`) and, written before
+  each run, a `containers.conf` and `storage.conf` pointed at by
+  `CONTAINERS_CONF_OVERRIDE` and `CONTAINERS_STORAGE_CONF` (an entry in
+  `env` for either variable replaces the generated file) and an empty
+  `subid` file bound over `/etc/subuid` and `/etc/subgid`. `box df` lists
+  the directory and `box clean` removes it; `box show` names the files it
+  would write. The host's own images are not shared: they were created
+  with a different ID mapping;
+- gives the sandbox a private tmpfs at `/run/user/<uid>` as
+  `XDG_RUNTIME_DIR` for podman's runtime state.
+
+The generated configuration follows from how the sandbox is built. `bwrap`
+maps a single user ID into its user namespace, so the subordinate ID ranges
+of `/etc/subuid` cannot be used inside. Left to create its own namespace,
+podman would insist on mapping them, log an error and two warnings and
+settle for a single mapping; joining the pause process `box` provides
+skips all that. The hidden files keep the fallback quiet should the pause
+process be gone (`podman system migrate` ends it, and the next command
+creates its own, noisily), and `ignore_chown_errors` in `storage.conf`
+makes image layers extract with every file owned by root. Images build and run fine
+this way; what does not work is running a container as another user
+(`USER app`, `--user`) or mapping one in (`--userns=keep-id`). Containers
+and `RUN` steps share the sandbox's network namespace (`netns = "host"`),
+which has loopback and the proxy only, and inherit `HTTP_PROXY` and
+friends, so they reach `allow_hosts` like the sandboxed program itself; the
+defaults include Docker Hub, quay.io and ghcr.io. Cgroups are disabled, as
+none is delegated to the sandbox, so `--memory` and the like have no
+effect. Native (kernel) overlayfs is used for the store; `fuse-overlayfs`
+would need `/dev/fuse` in `dev_binds` and a `storage.conf` of your own.
 
 ## macOS
 
@@ -193,6 +242,9 @@ release and is what other agent sandboxes build on.
 - `bwrap` ≥ 0.8 for `disable_userns`, ≥ 0.10 for overlay mounts (uses
   `--overlay-src`, `--overlay`, `--tmp-overlay`).
   Overlays need a non-setuid `bwrap` and a kernel with unprivileged overlayfs (≥ 5.11).
+- `podman` ≥ 4.4 (for `CONTAINERS_CONF_OVERRIDE`) with `crun` or `runc`
+  for the `podman` option; its image store also relies on unprivileged
+  overlayfs.
 - Go 1.24 or newer to build: `go build -o box ./cmd/box`
 
 ### Install with Go
@@ -263,9 +315,9 @@ the same build in CI and attaches the artifacts to a GitHub release.
   or `n` (name), `r` reverses, `q` quits. A name argument limits the view to
   one binary, as with `box ps`.
 - `box df` shows, per binary, how much disk its sandboxes take on the host:
-  the persistent overlay layers, the private `/tmp` directories (of running
-  and exited sandboxes alike) and the proxy logs, which is what `box clean`
-  removes. Sizes are allocated blocks, as `du` reports them. A name argument
+  the persistent overlay layers, the podman image store, the private `/tmp`
+  directories (of running and exited sandboxes alike) and the proxy logs,
+  which is what `box clean` removes. Sizes are allocated blocks, as `du` reports them. A name argument
   limits it to one binary; `-a` lists every layer, directory and log on its
   own row instead of the per-binary sums.
 - Mounts are applied parents-first, so a tmpfs on `$HOME` never hides a bind

@@ -77,6 +77,11 @@ allow_hosts = [
   "nginx.org","nvd.nist.gov",
   "registry.npmjs.org", "rubygems.org", "registry.dagger.io",
   "storage.googleapis.com",
+  # container registries (podman pull / build)
+  "registry-1.docker.io", "auth.docker.io", "index.docker.io",
+  "production.cloudflare.docker.com",
+  "quay.io", "*.quay.io", "ghcr.io",
+  "registry.fedoraproject.org", "registry.access.redhat.com",
 ]
 
 # Hostname inside the sandbox (empty keeps the host name).
@@ -114,6 +119,15 @@ unset_env = []
 # Mount the resolved executable read-only when it lives outside the paths above.
 bind_binary = true
 
+# Let rootless podman (and buildah) run inside: keeps user namespaces enabled
+# (podman needs one of its own, so this implies disable_userns = false),
+# mounts /sys read-only and ~/.local/state/box/podman/<binary> read-write,
+# which holds the binary's image store and a generated containers.conf and
+# storage.conf that fit the sandbox: containers share its network namespace
+# (and so reach allow_hosts through the proxy), cgroups are off, and image
+# layers are owned by a single user. See the README.
+podman = false
+
 # Raw arguments appended to the bwrap command line, for anything not covered.
 extra_args = []
 
@@ -134,6 +148,7 @@ extra_args = []
 # per-binary layer under ~/.local/state/box/overlays, so they survive across
 # runs without touching the host directories (`box clean claude` drops them).
 [binaries.claude]
+# podman = false
 overlays = [
   { path = "?~/.claude", persist = false },
   { path = "?~/.claude/skills", persist = true },
@@ -151,6 +166,14 @@ allow_hosts = [
 # With new_session = false, a sandboxed process shares the host terminal's session
 # and can use the TIOCSTI ioctl to inject keystrokes into the host shell, escaping the sandbox.
 new_session = false
+
+# `box run podman build .` builds images in a sandbox of their own; the
+# images land in ~/.local/state/box/podman/podman. To let an agent build
+# containers from inside its sandbox, set podman = true in its section (the
+# images then land in that binary's store), e.g. for claude:
+#
+[binaries.podman]
+podman = true
 
 # Example per-binary sections:
 #

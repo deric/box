@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `podman = true` sets a sandbox up for rootless podman and buildah, so an
+  agent can build and run containers from inside: user namespaces stay
+  enabled, `/sys` is mounted read-only, a per-binary directory
+  `~/.local/state/box/podman/<name>` with the image store is bound in, a
+  private tmpfs serves as `XDG_RUNTIME_DIR`, the `box _forward` wrapper
+  starts podman's pause process in a single-UID user namespace of its own
+  (so podman joins it quietly instead of failing to map `/etc/subuid`
+  ranges, which `bwrap` cannot provide, and logging an error about it),
+  an empty file is bound over `/etc/subuid` and `/etc/subgid` so podman
+  falls back to its single-UID mapping without that pause process,
+  and a `containers.conf` and `storage.conf` written into that directory
+  make containers share the sandbox's network namespace (and so its
+  proxy), disable cgroups and ignore chown errors in image layers.
+  The built-in `[binaries.podman]` section enables it for
+  `box run podman ...`; the defaults allow the Docker Hub, quay.io and
+  ghcr.io registries. `box df` lists the store and `box clean` removes it.
+
 ## [0.3.0] - 2026-10-15
 
 ### Added

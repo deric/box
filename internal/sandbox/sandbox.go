@@ -109,8 +109,8 @@ type mount struct {
 	dest    string
 	upper   string // overlay only; empty means a temporary overlay
 	work    string
-	fd      int // file only: descriptor bwrap copies from
-	mode    os.FileMode
+	fd      int         // file only: descriptor bwrap copies from
+	mode    os.FileMode // file and tmpfs: permissions (0 keeps the default)
 	order   int
 	visible bool // true for binds and overlays: dest exposes host content
 }
@@ -142,11 +142,17 @@ type Plan struct {
 	// Files lists host files held open on descriptors the runner inherits
 	// (copy_files), by descriptor number.
 	Files map[int]string
+	// Writes lists generated host files (podman's configuration), by path,
+	// with their content; they are written before running, after Dirs.
+	Writes map[string]string
 	// Proxy, when set, is started on the host before the runner.
 	Proxy *Proxy
 	// Sync lists copies (sync_files) written back to their host originals
 	// by the forwarder when the command exits.
 	Sync []SyncFile
+	// Pause, when set, is the PID file of podman's pause process, which the
+	// forwarder creates inside the sandbox before running the command.
+	Pause string
 	// Self is the box executable (Options.Self).
 	Self string
 	// Dir, ClearEnv, UnsetEnv and Env set up the runner's own working
@@ -156,6 +162,13 @@ type Plan struct {
 	ClearEnv bool
 	UnsetEnv []string
 	Env      []string
+}
+
+// needsForwarder reports whether the command runs under `box _forward`
+// inside the sandbox: to reach the proxy, to write sync_files back, or to
+// keep podman's pause process.
+func (p *Plan) needsForwarder() bool {
+	return p.Proxy != nil || len(p.Sync) > 0 || p.Pause != ""
 }
 
 // Command returns the invocation as a shell-quoted string.
@@ -186,6 +199,22 @@ func (p *Plan) Command() string {
 		parts = append(parts, strconv.Itoa(fd)+"<"+shellQuote(p.Files[fd]))
 	}
 	return strings.Join(parts, " ")
+}
+
+// WrittenFiles returns the paths of the files Exec writes on the host
+// before running (Writes), sorted.
+func (p *Plan) WrittenFiles() []string {
+	return sortedKeys(p.Writes)
+}
+
+// writeFiles writes p.Writes to the host, replacing earlier content.
+func (p *Plan) writeFiles() error {
+	for _, path := range p.WrittenFiles() {
+		if err := os.WriteFile(path, []byte(p.Writes[path]), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ProxyCommand returns the host-side proxy invocation as a shell-quoted
@@ -221,6 +250,9 @@ func (p *Plan) Exec() error {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
 		}
+	}
+	if err := p.writeFiles(); err != nil {
+		return err
 	}
 	if p.TmpDir != "" {
 		if err := makeTmpDir(p.TmpDir); err != nil {
@@ -484,6 +516,19 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			add(&mount{kind: kindRW, src: sock, dest: ProxySocket, visible: true})
 		}
 	}
+	if prof.Podman {
+		if resolveLinks {
+			plan.Warnings = append(plan.Warnings, "podman is not supported on this platform; ignored")
+		} else {
+			ms, err := podmanMounts(opts, plan)
+			if err != nil {
+				return nil, err
+			}
+			for _, m := range ms {
+				add(m)
+			}
+		}
+	}
 	for _, o := range prof.Overlays {
 		src, optional := exp(o.Path)
 		if src == "" {
@@ -531,7 +576,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 	if prof.BindBinary {
 		expose = append(expose, resolved)
 	}
-	if plan.Proxy != nil || len(plan.Sync) > 0 {
+	if plan.needsForwarder() {
 		expose = append(expose, opts.Self) // runs the forwarder inside
 	}
 	for _, e := range expose {
