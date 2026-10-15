@@ -148,7 +148,7 @@ extra_args = []
 # per-binary layer under ~/.local/state/box/overlays, so they survive across
 # runs without touching the host directories (`box clean claude` drops them).
 [binaries.claude]
-podman = true
+# podman = false
 overlays = [
   { path = "?~/.claude", persist = false },
   { path = "?~/.claude/skills", persist = true },
