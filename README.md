@@ -116,9 +116,10 @@ warns and runs the sandbox without DNS; `box info` reports what it found.
 
 ## Configuration
 
-`box init` writes a commented default file. If the file already exists it is
-left untouched and a unified diff against the built-in defaults is printed
-instead; pass `-f` to overwrite it. The `[default]` section applies to
+`box init` writes a commented default file and creates the `profile.d/`
+directory next to it (see [Profiles](#profiles)). If the file already exists
+it is left untouched and a unified diff against the built-in defaults is
+printed instead; pass `-f` to overwrite it. The `[default]` section applies to
 every binary; `[binaries.<name>]` (the binary's base name) overrides it. List
 values are **appended** to the defaults, scalar values **replace** them, and
 `drop_binds` removes inherited entries from any mount list.
@@ -223,7 +224,8 @@ A profile is a configuration that applies only when `box` is started in a
 directory under certain paths: looser network rules for work projects, a
 second checkout a project depends on, a tool that one tree needs. Profiles
 live in `~/.config/box/profile.d/` (next to `box.toml`, so `-c FILE` reads
-them from next to `FILE`), one `<name>.toml` per profile:
+them from next to `FILE`; `box init` creates the directory), one
+`<name>.toml` per profile:
 
 ```toml
 # ~/.config/box/profile.d/work.toml

@@ -251,6 +251,21 @@ func TestWriteDefaultRefusesExisting(t *testing.T) {
 	}
 }
 
+func TestEnsureProfileDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "box", "box.toml")
+	created, err := EnsureProfileDir(path)
+	if err != nil || !created {
+		t.Fatalf("first call: created=%v err=%v", created, err)
+	}
+	if fi, err := os.Stat(ProfileDir(path)); err != nil || !fi.IsDir() {
+		t.Fatalf("profile.d not created: %v", err)
+	}
+	created, err = EnsureProfileDir(path)
+	if err != nil || created {
+		t.Fatalf("second call: created=%v err=%v", created, err)
+	}
+}
+
 func TestDiffDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "box.toml")
 	if err := os.WriteFile(path, []byte(DefaultTOML), 0o644); err != nil {

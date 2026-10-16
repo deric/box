@@ -8,8 +8,8 @@
 # overrides it for one binary: list values are appended to the defaults
 # (use drop_binds to remove inherited entries), scalar values replace them.
 #
-# Profiles in profile.d/ next to this file apply on top of both when box is
-# started in a directory under one of their paths. A profile is a TOML file
+# Profiles in profile.d/ next to this file (created by `box init`) apply on
+# top of both when box is started in a directory under one of their paths. A profile is a TOML file
 # with a `paths` list followed by the same [default] and [binaries.<name>]
 # sections as this file, merged by the same rules; e.g. profile.d/work.toml:
 #

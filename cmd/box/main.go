@@ -42,7 +42,7 @@ Usage:
   box run [-n] [-v] [-c FILE] <command> [args...]   run command in a sandbox
   box show [-c FILE] <command> [args...]             print the sandbox command line
   box config [-c FILE] [<command>]                   print the effective profile
-  box init [-f] [-c FILE]                            write the default config file
+  box init [-f] [-c FILE]                            write the default config file and create profile.d
   box clean [-c FILE] [<command>]                    delete overlay layers, podman images, stale /tmp dirs and logs
   box df [-a] [-c FILE] [<command>]                  show disk usage of overlay layers, podman images, /tmp dirs and logs
   box ps [<command>]                                 list running sandboxes
@@ -267,7 +267,14 @@ func cmdInit(argv []string) error {
 			return err
 		}
 	}
-	err := config.WriteDefault(path, force)
+	created, err := config.EnsureProfileDir(path)
+	if err != nil {
+		return err
+	}
+	if created {
+		fmt.Println("created", config.ProfileDir(path))
+	}
+	err = config.WriteDefault(path, force)
 	if errors.Is(err, config.ErrExists) {
 		fmt.Fprintf(os.Stderr, "%s already exists; diff against the built-in defaults (use -f to overwrite):\n", path)
 		differs, derr := config.DiffDefault(path, os.Stdout)

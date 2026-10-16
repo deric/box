@@ -469,6 +469,21 @@ func WriteDefault(path string, force bool) error {
 	return os.WriteFile(path, []byte(DefaultTOML), 0o644)
 }
 
+// EnsureProfileDir creates the profile directory next to the configuration
+// file at configPath when it is missing, and reports whether it did.
+func EnsureProfileDir(configPath string) (created bool, err error) {
+	dir := ProfileDir(configPath)
+	if _, err := os.Stat(dir); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // DiffDefault writes a unified diff between the file at path and the
 // built-in DefaultTOML to w and reports whether the two differ. It shells out
 // to colordiff(1) when available, falling back to diff(1). Nothing is written

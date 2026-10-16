@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wins. `box config` names the profiles that apply in the current
   directory, `box show` prints them, `box info` lists the profiles found,
   and `box clean`, `box df` and `box top` consider the `log_dir` of every
-  profile.
+  profile. `box init` creates the directory when it is missing, also when
+  `box.toml` already exists.
 
 - `rw_parent = true` also mounts the parent of the working directory
   read-write, for checkouts that build against their siblings. It is
