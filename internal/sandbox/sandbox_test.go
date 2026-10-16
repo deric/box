@@ -1000,3 +1000,52 @@ func TestBuildRejectsStaleOverlaySymlink(t *testing.T) {
 		t.Errorf("no update command is known for tool: %v", err)
 	}
 }
+
+func TestBuildRWParent(t *testing.T) {
+	home, cwd, _, bin := fixture(t)
+	lookup := func(string) (string, error) { return filepath.Join(bin, "tool"), nil }
+	build := func(dir string) *Plan {
+		t.Helper()
+		plan, err := buildBwrap(config.Profile{RWBinds: []string{"$PWD"}, RWParent: true, Tmpfs: []string{"$HOME"}, Network: true},
+			Options{Binary: "tool", Cwd: dir, Home: home, Lookup: lookup}, "bwrap")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plan
+	}
+
+	// A nested project: its parent is bound read-write, after the tmpfs on $HOME.
+	nested := filepath.Join(cwd, "sub")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan := build(nested)
+	cmd := " " + strings.Join(plan.Args, " ") + " "
+	tmpfs := strings.Index(cmd, " --tmpfs "+home+" ")
+	parent := strings.Index(cmd, " --bind "+cwd+" "+cwd+" ")
+	self := strings.Index(cmd, " --bind "+nested+" "+nested+" ")
+	if tmpfs < 0 || parent < 0 || self < 0 || tmpfs > parent || parent > self {
+		t.Errorf("want tmpfs $HOME, then the parent, then $PWD bound read-write, got:\n%s", cmd)
+	}
+	if len(plan.Warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", plan.Warnings)
+	}
+
+	// Directly under $HOME: the parent is the home directory, so it is skipped.
+	plan = build(cwd)
+	if strings.Contains(" "+strings.Join(plan.Args, " ")+" ", " --bind "+home+" "+home+" ") {
+		t.Error("the home directory must never be bound read-write by rw_parent")
+	}
+	if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], "home directory") {
+		t.Errorf("want a warning about the home directory, got %v", plan.Warnings)
+	}
+
+	// Directly under /: the parent is the root directory, so it is skipped.
+	plan = build("/usr")
+	if strings.Contains(" "+strings.Join(plan.Args, " ")+" ", " --bind / / ") {
+		t.Error("the root directory must never be bound read-write by rw_parent")
+	}
+	if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], "root directory") {
+		t.Errorf("want a warning about the root directory, got %v", plan.Warnings)
+	}
+}

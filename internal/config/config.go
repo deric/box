@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -88,6 +89,7 @@ func (o Overlay) MarshalTOML() ([]byte, error) {
 type Section struct {
 	ROBinds       []string          `toml:"ro_binds"`
 	RWBinds       []string          `toml:"rw_binds"`
+	RWParent      *bool             `toml:"rw_parent"`
 	DevBinds      []string          `toml:"dev_binds"`
 	Tmpfs         []string          `toml:"tmpfs"`
 	Overlays      []Overlay         `toml:"overlays"`
@@ -125,6 +127,26 @@ type Section struct {
 type Config struct {
 	Default  Section            `toml:"default"`
 	Binaries map[string]Section `toml:"binaries"`
+	// Profiles are the directory profiles loaded from profile.d next to the
+	// configuration file, in file name order (see Load and Match).
+	Profiles []DirProfile `toml:"-"`
+}
+
+// DirProfile is a profile from profile.d: configuration that applies to
+// sandboxes started in a working directory under one of its Paths. It is
+// merged on top of the configuration file, its [default] section first and
+// its [binaries.<name>] section second, with the same rules: lists are
+// appended, scalars replace, drop_binds removes inherited entries.
+type DirProfile struct {
+	// Name is the file name without the .toml suffix.
+	Name string `toml:"-"`
+	// Path is the file the profile was read from.
+	Path string `toml:"-"`
+	// Paths are the directories the profile applies under; they accept ~,
+	// $HOME and other environment variables like any configured path.
+	Paths    []string           `toml:"paths"`
+	Default  Section            `toml:"default"`
+	Binaries map[string]Section `toml:"binaries"`
 }
 
 // DefaultLogDir is where the proxy writes its logs unless log_dir says
@@ -133,8 +155,12 @@ const DefaultLogDir = "/tmp/box"
 
 // Profile is the fully resolved configuration for one binary.
 type Profile struct {
-	ROBinds    []string  `toml:"ro_binds"`
-	RWBinds    []string  `toml:"rw_binds"`
+	ROBinds []string `toml:"ro_binds"`
+	RWBinds []string `toml:"rw_binds"`
+	// RWParent also mounts the parent of the working directory read-write,
+	// unless that parent is the root or the home directory (see package
+	// sandbox). Meant for profiles whose projects reach into siblings.
+	RWParent   bool      `toml:"rw_parent"`
 	DevBinds   []string  `toml:"dev_binds"`
 	Tmpfs      []string  `toml:"tmpfs"`
 	Overlays   []Overlay `toml:"overlays"`
@@ -245,6 +271,12 @@ func Path() (string, error) {
 	return filepath.Join(home, ".config", "box", "box.toml"), nil
 }
 
+// ProfileDir returns the directory profiles are read from: profile.d next
+// to the configuration file at configPath.
+func ProfileDir(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "profile.d")
+}
+
 // StateDir returns the directory for persistent overlay layers:
 // $XDG_STATE_HOME/box or ~/.local/state/box.
 func StateDir() (string, error) {
@@ -261,36 +293,165 @@ func StateDir() (string, error) {
 // Parse decodes TOML configuration text.
 func Parse(text string) (*Config, error) {
 	var c Config
-	md, err := toml.Decode(text, &c)
-	if err != nil {
+	if err := decode(text, &c); err != nil {
 		return nil, err
+	}
+	return &c, nil
+}
+
+// ParseProfile decodes the TOML text of a profile named name. A profile
+// must list at least one path.
+func ParseProfile(name, text string) (*DirProfile, error) {
+	var p DirProfile
+	if err := decode(text, &p); err != nil {
+		return nil, err
+	}
+	p.Name = name
+	if len(p.Paths) == 0 {
+		return nil, fmt.Errorf("profile has no paths")
+	}
+	for _, path := range p.Paths {
+		if path == "" {
+			return nil, fmt.Errorf("profile has an empty path")
+		}
+	}
+	return &p, nil
+}
+
+// decode decodes text into v and rejects keys v has no field for.
+func decode(text string, v any) error {
+	md, err := toml.Decode(text, v)
+	if err != nil {
+		return err
 	}
 	if undecoded := md.Undecoded(); len(undecoded) > 0 {
 		keys := make([]string, len(undecoded))
 		for i, k := range undecoded {
 			keys[i] = k.String()
 		}
-		return nil, fmt.Errorf("unknown configuration keys: %s", strings.Join(keys, ", "))
+		return fmt.Errorf("unknown configuration keys: %s", strings.Join(keys, ", "))
 	}
-	return &c, nil
+	return nil
 }
 
-// Load reads the configuration file at path. A missing file yields the
-// built-in defaults; the returned bool reports whether the file existed.
-func Load(path string) (*Config, bool, error) {
-	data, err := os.ReadFile(path)
+// LoadProfiles reads every *.toml file in dir as a profile, in file name
+// order. A missing directory yields no profiles.
+func LoadProfiles(dir string) ([]DirProfile, error) {
+	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
-		c, perr := Parse(DefaultTOML)
-		return c, false, perr
+		return nil, nil
 	}
 	if err != nil {
+		return nil, err
+	}
+	var profiles []DirProfile
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".toml") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		p, err := ParseProfile(strings.TrimSuffix(e.Name(), ".toml"), string(data))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		p.Path = path
+		profiles = append(profiles, *p)
+	}
+	return profiles, nil
+}
+
+// Match returns the profiles that apply to a sandbox started in dir: those
+// with a path that is dir or a parent of it, either as given or with
+// symlinks resolved. The profile with the deepest matching path comes
+// last, so it wins when they are merged in order; ties keep file name
+// order.
+func (c *Config) Match(dir string) []DirProfile {
+	dir = filepath.Clean(dir)
+	dirs := []string{dir}
+	if real, err := filepath.EvalSymlinks(dir); err == nil && real != dir {
+		dirs = append(dirs, real)
+	}
+	home, _ := os.UserHomeDir()
+	type match struct {
+		profile DirProfile
+		depth   int
+	}
+	var matches []match
+	for _, p := range c.Profiles {
+		best := -1
+		for _, raw := range p.Paths {
+			root := expandPath(raw, home)
+			if root == "" {
+				continue
+			}
+			for _, d := range dirs {
+				if d == root || strings.HasPrefix(d, strings.TrimSuffix(root, "/")+"/") {
+					if n := strings.Count(root, "/"); n > best {
+						best = n
+					}
+				}
+			}
+		}
+		if best >= 0 {
+			matches = append(matches, match{p, best})
+		}
+	}
+	sort.SliceStable(matches, func(i, j int) bool { return matches[i].depth < matches[j].depth })
+	out := make([]DirProfile, len(matches))
+	for i, m := range matches {
+		out[i] = m.profile
+	}
+	return out
+}
+
+// expandPath expands ~, $HOME and other environment variables in a profile
+// path and cleans it. It returns "" for a path that expands to nothing.
+func expandPath(p, home string) string {
+	if p == "~" {
+		p = home
+	} else if strings.HasPrefix(p, "~/") {
+		p = filepath.Join(home, p[2:])
+	}
+	p = os.Expand(p, func(k string) string {
+		if k == "HOME" {
+			return home
+		}
+		return os.Getenv(k)
+	})
+	if p == "" {
+		return ""
+	}
+	return filepath.Clean(p)
+}
+
+// Load reads the configuration file at path and the profiles in profile.d
+// next to it. A missing file yields the built-in defaults; the returned
+// bool reports whether the file existed.
+func Load(path string) (*Config, bool, error) {
+	var c *Config
+	data, err := os.ReadFile(path)
+	exists := true
+	switch {
+	case os.IsNotExist(err):
+		exists = false
+		if c, err = Parse(DefaultTOML); err != nil {
+			return nil, false, err
+		}
+	case err != nil:
 		return nil, false, err
+	default:
+		if c, err = Parse(string(data)); err != nil {
+			return nil, true, fmt.Errorf("%s: %w", path, err)
+		}
 	}
-	c, err := Parse(string(data))
-	if err != nil {
-		return nil, true, fmt.Errorf("%s: %w", path, err)
+	if c.Profiles, err = LoadProfiles(ProfileDir(path)); err != nil {
+		return nil, exists, err
 	}
-	return c, true, nil
+	return c, exists, nil
 }
 
 // ErrExists is returned by WriteDefault when the target file already exists.
@@ -351,71 +512,149 @@ func lookupDiffTool() (string, error) {
 	return p, nil
 }
 
-// Resolve merges the default section with the section for name (the binary's
-// base name) and returns the effective profile.
-func (c *Config) Resolve(name string) Profile {
-	base := c.Default
-	sec, hasSec := c.Binaries[name]
-	if hasSec && sec.Inherit != nil && !*sec.Inherit {
+// Resolve merges the default section, the section for name (the binary's
+// base name) and then each of the given profiles, in order, and returns the
+// effective profile. Profiles usually come from Match. At every step lists
+// are appended, scalars replace, drop_binds removes entries merged so far
+// and inherit = false discards them altogether.
+func (c *Config) Resolve(name string, profiles ...DirProfile) Profile {
+	sections := []Section{c.Default}
+	if sec, ok := c.Binaries[name]; ok {
+		sections = append(sections, sec)
+	}
+	for _, p := range profiles {
+		sections = append(sections, p.Default)
+		if sec, ok := p.Binaries[name]; ok {
+			sections = append(sections, sec)
+		}
+	}
+	var merged Section
+	for _, sec := range sections {
+		merged = merge(merged, sec)
+	}
+	return finalize(merged)
+}
+
+// merge lays over on top of base. List values are appended (minus
+// over.DropBinds), scalar values set in over replace those of base, and
+// over.Inherit = false discards base first.
+func merge(base, over Section) Section {
+	if over.Inherit != nil && !*over.Inherit {
 		base = Section{}
 	}
-
-	p := Profile{
-		ROBinds:       mergeList(base.ROBinds, sec.ROBinds, sec.DropBinds),
-		RWBinds:       mergeList(base.RWBinds, sec.RWBinds, sec.DropBinds),
-		DevBinds:      mergeList(base.DevBinds, sec.DevBinds, sec.DropBinds),
-		Tmpfs:         mergeList(base.Tmpfs, sec.Tmpfs, sec.DropBinds),
-		Overlays:      mergeOverlays(base.Overlays, sec.Overlays, sec.DropBinds),
-		CopyFiles:     mergeList(base.CopyFiles, sec.CopyFiles, sec.DropBinds),
-		SyncFiles:     mergeList(base.SyncFiles, sec.SyncFiles, sec.DropBinds),
-		PrivateTmp:    pick(base.PrivateTmp, sec.PrivateTmp, false),
-		Network:       pick(base.Network, sec.Network, true),
-		Proxy:         pick(base.Proxy, sec.Proxy, false),
-		DNS:           pick(base.DNS, sec.DNS, true),
-		AllowHosts:    mergeList(base.AllowHosts, sec.AllowHosts, nil),
-		LogDir:        pick(base.LogDir, sec.LogDir, DefaultLogDir),
-		Hostname:      pick(base.Hostname, sec.Hostname, ""),
-		NewSession:    pick(base.NewSession, sec.NewSession, false),
-		DisableUserns: pick(base.DisableUserns, sec.DisableUserns, false),
-		DieWithParent: pick(base.DieWithParent, sec.DieWithParent, true),
-		ClearEnv:      pick(base.ClearEnv, sec.ClearEnv, false),
+	drop := over.DropBinds
+	m := Section{
+		ROBinds:       mergeList(base.ROBinds, over.ROBinds, drop),
+		RWBinds:       mergeList(base.RWBinds, over.RWBinds, drop),
+		RWParent:      pick(base.RWParent, over.RWParent),
+		DevBinds:      mergeList(base.DevBinds, over.DevBinds, drop),
+		Tmpfs:         mergeList(base.Tmpfs, over.Tmpfs, drop),
+		Overlays:      mergeOverlays(base.Overlays, over.Overlays, drop),
+		CopyFiles:     mergeList(base.CopyFiles, over.CopyFiles, drop),
+		SyncFiles:     mergeList(base.SyncFiles, over.SyncFiles, drop),
+		PrivateTmp:    pick(base.PrivateTmp, over.PrivateTmp),
+		Network:       pick(base.Network, over.Network),
+		Proxy:         pick(base.Proxy, over.Proxy),
+		DNS:           pick(base.DNS, over.DNS),
+		AllowHosts:    mergeList(base.AllowHosts, over.AllowHosts, nil),
+		LogDir:        pick(base.LogDir, over.LogDir),
+		Hostname:      pick(base.Hostname, over.Hostname),
+		NewSession:    pick(base.NewSession, over.NewSession),
+		DisableUserns: pick(base.DisableUserns, over.DisableUserns),
+		DieWithParent: pick(base.DieWithParent, over.DieWithParent),
+		ClearEnv:      pick(base.ClearEnv, over.ClearEnv),
+		PassEnv:       mergeList(base.PassEnv, over.PassEnv, nil),
 		Env:           map[string]string{},
-		UnsetEnv:      mergeList(base.UnsetEnv, sec.UnsetEnv, nil),
-		BindBinary:    pick(base.BindBinary, sec.BindBinary, true),
-		Podman:        pick(base.Podman, sec.Podman, false),
-		SSH:           pick(base.SSH, sec.SSH, false),
-		SSHKey:        pick(base.SSHKey, sec.SSHKey, ""),
-		SSHUser:       pick(base.SSHUser, sec.SSHUser, ""),
-		CPUs:          pick(base.CPUs, sec.CPUs, 0),
-		Memory:        pick(base.Memory, sec.Memory, ""),
-		TmpfsSize:     pick(base.TmpfsSize, sec.TmpfsSize, ""),
-		ExtraArgs:     append(append([]string{}, base.ExtraArgs...), sec.ExtraArgs...),
-		SeatbeltRules: append(append([]string{}, base.SeatbeltRules...), sec.SeatbeltRules...),
+		UnsetEnv:      mergeList(base.UnsetEnv, over.UnsetEnv, nil),
+		BindBinary:    pick(base.BindBinary, over.BindBinary),
+		Podman:        pick(base.Podman, over.Podman),
+		SSH:           pick(base.SSH, over.SSH),
+		SSHKey:        pick(base.SSHKey, over.SSHKey),
+		SSHUser:       pick(base.SSHUser, over.SSHUser),
+		CPUs:          pick(base.CPUs, over.CPUs),
+		Memory:        pick(base.Memory, over.Memory),
+		TmpfsSize:     pick(base.TmpfsSize, over.TmpfsSize),
+		ExtraArgs:     append(append([]string{}, base.ExtraArgs...), over.ExtraArgs...),
+		SeatbeltRules: append(append([]string{}, base.SeatbeltRules...), over.SeatbeltRules...),
+	}
+	for k, v := range base.Env {
+		m.Env[k] = v
+	}
+	for k, v := range over.Env {
+		m.Env[k] = v
+	}
+	return m
+}
+
+// finalize turns a merged section into a profile, filling unset scalars
+// with the built-in defaults and applying unset_env.
+func finalize(s Section) Profile {
+	p := Profile{
+		ROBinds:       s.ROBinds,
+		RWBinds:       s.RWBinds,
+		RWParent:      orElse(s.RWParent, false),
+		DevBinds:      s.DevBinds,
+		Tmpfs:         s.Tmpfs,
+		Overlays:      s.Overlays,
+		CopyFiles:     s.CopyFiles,
+		SyncFiles:     s.SyncFiles,
+		PrivateTmp:    orElse(s.PrivateTmp, false),
+		Network:       orElse(s.Network, true),
+		Proxy:         orElse(s.Proxy, false),
+		DNS:           orElse(s.DNS, true),
+		AllowHosts:    s.AllowHosts,
+		LogDir:        orElse(s.LogDir, DefaultLogDir),
+		Hostname:      orElse(s.Hostname, ""),
+		NewSession:    orElse(s.NewSession, false),
+		DisableUserns: orElse(s.DisableUserns, false),
+		DieWithParent: orElse(s.DieWithParent, true),
+		ClearEnv:      orElse(s.ClearEnv, false),
+		Env:           map[string]string{},
+		UnsetEnv:      s.UnsetEnv,
+		BindBinary:    orElse(s.BindBinary, true),
+		Podman:        orElse(s.Podman, false),
+		SSH:           orElse(s.SSH, false),
+		SSHKey:        orElse(s.SSHKey, ""),
+		SSHUser:       orElse(s.SSHUser, ""),
+		CPUs:          orElse(s.CPUs, 0),
+		Memory:        orElse(s.Memory, ""),
+		TmpfsSize:     orElse(s.TmpfsSize, ""),
+		ExtraArgs:     s.ExtraArgs,
+		SeatbeltRules: s.SeatbeltRules,
+	}
+	if p.ExtraArgs == nil {
+		p.ExtraArgs = []string{}
+	}
+	if p.SeatbeltRules == nil {
+		p.SeatbeltRules = []string{}
 	}
 	if p.Podman {
 		// Rootless podman re-executes itself inside a user namespace of its
 		// own; with --disable-userns it cannot even start.
 		p.DisableUserns = false
 	}
-	for k, v := range base.Env {
-		p.Env[k] = v
-	}
-	for k, v := range sec.Env {
+	for k, v := range s.Env {
 		p.Env[k] = v
 	}
 	for _, k := range p.UnsetEnv {
 		delete(p.Env, k)
 	}
-	p.PassEnv = mergeList(base.PassEnv, sec.PassEnv, p.UnsetEnv)
+	p.PassEnv = mergeList(s.PassEnv, nil, p.UnsetEnv)
 	return p
 }
 
-func pick[T any](base, override *T, fallback T) T {
+// pick returns override when set, else base.
+func pick[T any](base, override *T) *T {
 	if override != nil {
-		return *override
+		return override
 	}
-	if base != nil {
-		return *base
+	return base
+}
+
+// orElse dereferences p, falling back to fallback when it is nil.
+func orElse[T any](p *T, fallback T) T {
+	if p != nil {
+		return *p
 	}
 	return fallback
 }

@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Profiles: a `<name>.toml` file in `~/.config/box/profile.d/` (next to
+  `box.toml`) applies on top of the configuration when `box` is started in a
+  directory under one of its `paths`. The rest of the file holds the same
+  `[default]` and `[binaries.<name>]` sections as `box.toml`, merged by the
+  same rules; of several matching profiles the one with the deepest path
+  wins. `box config` names the profiles that apply in the current
+  directory, `box show` prints them, `box info` lists the profiles found,
+  and `box clean`, `box df` and `box top` consider the `log_dir` of every
+  profile.
+
+- `rw_parent = true` also mounts the parent of the working directory
+  read-write, for checkouts that build against their siblings. It is
+  ignored with a warning when that parent is `/` or the home directory.
+
 ## [0.4.0] - 2026-10-26
 
 ### Added
@@ -171,3 +189,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Packaging with nfpm and a Dagger-based release pipeline.
 
 [0.1.1]: https://github.com/deric/box/releases/tag/v0.1.1
+[Unreleased]: https://github.com/deric/box/compare/v0.4.0...HEAD

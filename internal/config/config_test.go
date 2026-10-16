@@ -473,3 +473,244 @@ ssh_user = "git"
 		t.Error("ssh must be off in the default configuration")
 	}
 }
+
+func TestParseProfile(t *testing.T) {
+	p, err := ParseProfile("work", `
+paths = ["~/work", "/srv/projects"]
+
+[default]
+rw_parent = true
+allow_hosts = ["gitlab.example.com"]
+
+[binaries.claude]
+pass_env = ["WORK_*"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "work" || len(p.Paths) != 2 || p.Default.RWParent == nil || !*p.Default.RWParent {
+		t.Errorf("profile = %+v", p)
+	}
+	if _, err := ParseProfile("x", "[default]\nnetwork = false\n"); err == nil {
+		t.Error("expected error for a profile without paths")
+	}
+	if _, err := ParseProfile("x", "paths = [\"\"]\n"); err == nil {
+		t.Error("expected error for an empty path")
+	}
+	if _, err := ParseProfile("x", "paths = [\"/a\"]\npath = \"/b\"\n"); err == nil {
+		t.Error("expected error for an unknown key")
+	}
+	if _, err := ParseProfile("x", "paths = [\"/a\"]\n[default]\nrw_parnet = true\n"); err == nil {
+		t.Error("expected error for a misspelled section key")
+	}
+}
+
+func TestLoadProfiles(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "box.toml")
+	profDir := ProfileDir(cfgPath)
+	if profDir != filepath.Join(dir, "profile.d") {
+		t.Fatalf("ProfileDir = %q", profDir)
+	}
+
+	// No directory: defaults, no profiles.
+	c, exists, err := Load(cfgPath)
+	if err != nil || exists || len(c.Profiles) != 0 {
+		t.Fatalf("Load without profile.d: exists=%v profiles=%d err=%v", exists, len(c.Profiles), err)
+	}
+
+	if err := os.MkdirAll(profDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"b-work.toml":  "paths = [\"/srv/work\"]\n[default]\nrw_parent = true\n",
+		"a-home.toml":  "paths = [\"~/home\"]\n",
+		"README":       "not a profile",
+		"ignored.conf": "paths = [\"/x\"]\n",
+	}
+	for name, text := range files {
+		if err := os.WriteFile(filepath.Join(profDir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, _, err = Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Profiles) != 2 || c.Profiles[0].Name != "a-home" || c.Profiles[1].Name != "b-work" {
+		t.Fatalf("profiles = %+v", c.Profiles)
+	}
+	if want := filepath.Join(profDir, "b-work.toml"); c.Profiles[1].Path != want {
+		t.Errorf("Path = %q, want %q", c.Profiles[1].Path, want)
+	}
+
+	// A broken profile fails the whole load and names the file.
+	if err := os.WriteFile(filepath.Join(profDir, "broken.toml"), []byte("paths = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Load(cfgPath); err == nil || !strings.Contains(err.Error(), "broken.toml") {
+		t.Errorf("expected an error naming broken.toml, got %v", err)
+	}
+}
+
+func TestMatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PROJECTS", "/srv/projects")
+	mk := func(name string, paths ...string) DirProfile {
+		return DirProfile{Name: name, Paths: paths}
+	}
+	c := &Config{Profiles: []DirProfile{
+		mk("work", "~/work"),
+		mk("secret", "$HOME/work/secret", "/does/not/matter"),
+		mk("srv", "$PROJECTS/"),
+		mk("root", "/"),
+		mk("unset", "$NOT_SET_ANYWHERE"),
+	}}
+	names := func(dir string) []string {
+		var out []string
+		for _, p := range c.Match(dir) {
+			out = append(out, p.Name)
+		}
+		return out
+	}
+	cases := []struct {
+		dir  string
+		want []string
+	}{
+		{filepath.Join(home, "work"), []string{"root", "work"}},
+		{filepath.Join(home, "work", "api"), []string{"root", "work"}},
+		{filepath.Join(home, "work", "secret", "x"), []string{"root", "work", "secret"}},
+		{filepath.Join(home, "workshop"), []string{"root"}},
+		{"/srv/projects/a", []string{"root", "srv"}},
+		{"/srv", []string{"root"}},
+	}
+	for _, tc := range cases {
+		if got := names(tc.dir); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("Match(%s) = %v, want %v", tc.dir, got, tc.want)
+		}
+	}
+	if got := (&Config{}).Match(home); len(got) != 0 {
+		t.Errorf("Match without profiles = %v", got)
+	}
+}
+
+func TestMatchResolvesSymlinks(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real", "proj")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(filepath.Join(root, "real"), link); err != nil {
+		t.Fatal(err)
+	}
+	c := &Config{Profiles: []DirProfile{{Name: "real", Paths: []string{filepath.Join(root, "real")}}}}
+	if got := c.Match(filepath.Join(link, "proj")); len(got) != 1 {
+		t.Errorf("a symlinked working directory should match the real path, got %v", got)
+	}
+}
+
+func TestResolveWithProfiles(t *testing.T) {
+	c, err := Parse(`
+[default]
+ro_binds = ["/usr"]
+rw_binds = ["$PWD"]
+allow_hosts = ["github.com"]
+cpus = 1
+env = { A = "1" }
+
+[binaries.claude]
+pass_env = ["CLAUDE_*"]
+allow_hosts = ["*.anthropic.com"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := ParseProfile("work", `
+paths = ["/w"]
+
+[default]
+rw_parent = true
+ro_binds = ["/opt/work"]
+drop_binds = ["/usr"]
+allow_hosts = ["gitlab.example.com"]
+cpus = 4
+env = { B = "2" }
+
+[binaries.claude]
+pass_env = ["WORK_*"]
+unset_env = ["A"]
+memory = "8G"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := ParseProfile("secret", `
+paths = ["/w/secret"]
+
+[default]
+rw_parent = false
+network = false
+proxy = false
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Without profiles nothing changes.
+	if p := c.Resolve("claude"); p.RWParent || p.CPUs != 1 || len(p.ROBinds) != 1 {
+		t.Errorf("Resolve without profiles = %+v", p)
+	}
+
+	p := c.Resolve("claude", *work)
+	if !p.RWParent {
+		t.Error("rw_parent should come from the profile")
+	}
+	if got, want := p.ROBinds, []string{"/opt/work"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ro_binds = %v, want %v (drop_binds in a profile drops inherited entries)", got, want)
+	}
+	if got, want := p.RWBinds, []string{"$PWD"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rw_binds = %v, want %v", got, want)
+	}
+	if got, want := p.AllowHosts, []string{"github.com", "*.anthropic.com", "gitlab.example.com"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("allow_hosts = %v, want %v", got, want)
+	}
+	if got, want := p.PassEnv, []string{"CLAUDE_*", "WORK_*"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("pass_env = %v, want %v", got, want)
+	}
+	if got, want := p.Env, map[string]string{"B": "2"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("env = %v, want %v", got, want)
+	}
+	if p.CPUs != 4 || p.Memory != "8G" {
+		t.Errorf("limits: cpus=%v memory=%q", p.CPUs, p.Memory)
+	}
+
+	// The profile's binary section does not leak into other binaries.
+	if o := c.Resolve("other", *work); o.Memory != "" || len(o.PassEnv) != 0 || !o.RWParent {
+		t.Errorf("Resolve(other, work) = %+v", o)
+	}
+
+	// Later profiles win.
+	p = c.Resolve("claude", *work, *secret)
+	if p.RWParent || p.Network || p.Proxy || p.CPUs != 4 {
+		t.Errorf("Resolve(claude, work, secret) = %+v", p)
+	}
+}
+
+func TestResolveRWParentDefault(t *testing.T) {
+	c, err := Parse(DefaultLinuxTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Resolve("claude").RWParent {
+		t.Error("rw_parent must be off by default")
+	}
+	c, err = Parse("[default]\nrw_parent = true\n[binaries.x]\nrw_parent = false\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Resolve("y").RWParent || c.Resolve("x").RWParent {
+		t.Error("rw_parent should be a scalar that binary sections override")
+	}
+}
