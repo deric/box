@@ -422,6 +422,16 @@ the same build in CI and attaches the artifacts to a GitHub release.
   across runs, without being written to the host directories; `box clean
   claude` drops it. Project skills in `.claude/skills` live under `$PWD` and
   are read-write like the rest of it.
+- A program that updates itself inside the sandbox may stop starting there.
+  claude installs a new version under `~/.local/share/claude/versions`, in
+  the tmpfs `$HOME` that is gone on exit, and repoints the `~/.local/bin/claude`
+  symlink, which lives in a persistent overlay and so survives in claude's
+  layer; the next run execs a dangling symlink and the forwarder inside
+  reports `exec: "claude": executable file not found in $PATH`. `box run`
+  checks the layer before starting and refuses with a message naming the
+  version the symlink points at and the one the host has; run `claude update`
+  on the host so it has that version too, or `box clean claude` to drop the
+  layer and start over from the host's installation.
   The write-back happens once, on exit: a sandbox that is killed outright
   leaves the host file untouched, and when two sandboxes edit the same file
   the last one to exit wins (a warning is printed when the host file changed

@@ -906,3 +906,97 @@ func TestScopeName(t *testing.T) {
 		}
 	}
 }
+
+// A persistent overlay layer that carries a symlink of the command pointing
+// at a path the host lacks (claude updated itself inside: the symlink in
+// ~/.local/bin persisted, the version in the tmpfs $HOME did not) is
+// reported before the run, naming both versions and the way out.
+func TestBuildRejectsStaleOverlaySymlink(t *testing.T) {
+	home, cwd, tools, _ := fixture(t)
+	state := filepath.Join(filepath.Dir(home), "state")
+	versions := filepath.Join(tools, "versions")
+	if err := os.MkdirAll(filepath.Join(versions, "1.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(versions, "1.0"), filepath.Join(tools, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	upper := filepath.Join(state, "overlays", "claude", layerName(tools), "upper")
+	if err := os.MkdirAll(upper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prof := config.Profile{Overlays: []config.Overlay{{Path: tools, Persist: true}}}
+	opts := Options{
+		Binary: "claude", Cwd: cwd, Home: home, StateDir: state,
+		Lookup: func(string) (string, error) { return filepath.Join(tools, "claude"), nil },
+	}
+
+	// Untouched inside: the host's entry shows through.
+	if _, err := buildBwrap(prof, opts, "bwrap"); err != nil {
+		t.Fatalf("no layer entry: %v", err)
+	}
+
+	// Updated inside to a version the host has as well: fine.
+	if err := os.MkdirAll(filepath.Join(versions, "1.1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(versions, "1.1"), filepath.Join(upper, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildBwrap(prof, opts, "bwrap"); err != nil {
+		t.Fatalf("layer entry with existing target: %v", err)
+	}
+
+	// Updated inside to a version the host lacks: refused, with the facts.
+	if err := os.RemoveAll(filepath.Join(versions, "1.1")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := buildBwrap(prof, opts, "bwrap")
+	if err == nil {
+		t.Fatal("dangling layer symlink should be rejected")
+	}
+	for _, want := range []string{
+		filepath.Join(tools, "claude") + ": inside the sandbox it points at " + filepath.Join(versions, "1.1"),
+		"the host's points at " + filepath.Join(versions, "1.0"),
+		"`claude update`",
+		"`box clean claude`",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q in %q", want, err)
+		}
+	}
+
+	// A relative symlink is resolved against the command's directory.
+	if err := os.Remove(filepath.Join(upper, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("versions/1.0", filepath.Join(upper, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildBwrap(prof, opts, "bwrap"); err != nil {
+		t.Fatalf("relative layer symlink with existing target: %v", err)
+	}
+
+	// Other programs get no update command, only the clean-up.
+	if err := os.Remove(filepath.Join(upper, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("versions/2.0", filepath.Join(upper, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	opts.Binary = "tool"
+	toolUpper := filepath.Join(state, "overlays", "tool", layerName(tools), "upper")
+	if err := os.MkdirAll(toolUpper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("versions/2.0", filepath.Join(toolUpper, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = buildBwrap(prof, opts, "bwrap")
+	if err == nil || !strings.Contains(err.Error(), "install that version on the host, or `box clean tool`") {
+		t.Errorf("want generic hint for tool, got %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "update`") {
+		t.Errorf("no update command is known for tool: %v", err)
+	}
+}
