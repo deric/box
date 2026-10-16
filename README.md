@@ -202,6 +202,9 @@ with `?` to skip silently.
 | `unset_env`       | list              | variables to unset (also removes `pass_env` entries)           |
 | `bind_binary`     | bool              | mount the resolved executable if no other mount exposes it     |
 | `podman`          | bool              | set the sandbox up for rootless podman inside (see [Podman](#podman)); implies `disable_userns = false` |
+| `ssh`             | bool              | let ssh inside reach `allow_hosts` through the proxy (see [SSH](#ssh)); off by default |
+| `ssh_key`         | string            | with `ssh`: host private key mounted read-only at its own path and used as the identity |
+| `ssh_user`        | string            | with `ssh`: user name to log in as                             |
 | `cpus`            | number            | CPU time per second in cores (`1.5` is one and a half); `0` lifts the limit |
 | `memory`          | string            | memory limit, swap excluded, as a size (`2G`, `512M`, `1.5G`, bytes); `""` lifts it |
 | `tmpfs_size`      | string            | size of each tmpfs mount, as a size; `""` leaves the kernel default |
@@ -261,6 +264,42 @@ have no effect; the sandbox's own `cpus` and `memory` limits cover the
 containers all the same. Native (kernel) overlayfs is used for the store; `fuse-overlayfs`
 would need `/dev/fuse` in `dev_binds` and a `storage.conf` of your own.
 
+## SSH
+
+A sandbox cannot open SSH connections by default: it has no network of its
+own, and the proxy refuses `CONNECT` requests to port 22 (with a
+`403 Forbidden` and a line in the log, like a host that is not on
+`allow_hosts`). With `ssh = true` in a binary's section the proxy lets
+them through to `allow_hosts`, and `box` binds a generated `ssh_config`
+into the sandbox whose `ProxyCommand` is `box _connect %h %p`: it asks the
+proxy for a tunnel over its unix socket and relays the connection, so
+`ssh`, and `git` over ssh, reach the allowed hosts the way HTTPS clients
+do. `ssh_key` names a private key on the host, mounted read-only at its own
+path (a symlink is followed on the host) and set as `IdentityFile`;
+`ssh_user` sets `User`. A copy of the host's `~/.ssh/known_hosts` is placed
+inside, so known hosts are trusted and new ones can be added without
+touching the host's file. The host's ssh-agent is not reachable from inside,
+so a key with a passphrase prompts for it.
+
+```toml
+[binaries.claude]
+ssh = true
+ssh_key = "~/.ssh/id_ed25519_deploy"
+ssh_user = "git"
+```
+
+The generated file is bound over `/etc/ssh/ssh_config`, with the host's own
+content appended so its defaults keep applying, except for `Include` lines,
+which are commented out: ssh refuses to include a file that belongs to
+neither root nor the user, and inside the sandbox's user namespace every
+root-owned file appears to belong to `nobody`. A `~/.ssh/config` of your
+own (added to `ro_binds`) is read first and wins, as usual. On a host
+without `/etc/ssh/ssh_config` the generated file goes to `~/.ssh/config`
+instead. With `network = true` ssh connects directly and only the key, user
+and known hosts are set up; with `proxy = false` there is no network to
+reach and `ssh` is ignored with a warning. `box show` prints the generated
+file and the `-ssh` flag of the proxy.
+
 ## macOS
 
 On macOS `box` runs the program under `sandbox-exec` with a generated Seatbelt
@@ -274,7 +313,7 @@ the Linux sandbox as closely as Seatbelt allows:
 | unmounted paths are absent            | unlisted paths are denied; `stat` still works everywhere so path resolution does |
 | `tmpfs`: empty, writable, discarded   | hidden: contents can be neither read nor written              |
 | `overlays`                            | read-only (with a warning)                                    |
-| `copy_files`, `sync_files`, `private_tmp`, `proxy` | not supported (warned and ignored)               |
+| `copy_files`, `sync_files`, `private_tmp`, `proxy`, `ssh` | not supported (warned and ignored)        |
 | `network = false`: own empty netns    | no IP traffic at all, loopback included                       |
 | Unix sockets under mounted paths      | Unix sockets under exposed paths                              |
 | PID / IPC namespaces                  | processes may only inspect and signal their own sandbox; Mach services are limited to a short list (name lookup, logging, and with network: DNS and TLS trust) |

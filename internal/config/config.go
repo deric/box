@@ -110,6 +110,9 @@ type Section struct {
 	UnsetEnv      []string          `toml:"unset_env"`
 	BindBinary    *bool             `toml:"bind_binary"`
 	Podman        *bool             `toml:"podman"`
+	SSH           *bool             `toml:"ssh"`
+	SSHKey        *string           `toml:"ssh_key"`
+	SSHUser       *string           `toml:"ssh_user"`
 	CPUs          *float64          `toml:"cpus"`
 	Memory        *string           `toml:"memory"`
 	TmpfsSize     *string           `toml:"tmpfs_size"`
@@ -162,6 +165,15 @@ type Profile struct {
 	// storage.conf suited to a single-UID user namespace (see package
 	// sandbox). It implies DisableUserns = false.
 	Podman bool `toml:"podman"`
+	// SSH lets the sandbox open SSH connections to AllowHosts: the proxy
+	// tunnels CONNECT requests to port 22, which it refuses otherwise, and
+	// an ssh_config generated inside routes every connection through it
+	// (see package sandbox). SSHKey names a host private key to mount
+	// read-only at its own path and use as the identity, SSHUser the user
+	// name to log in as; both are optional and have no effect without SSH.
+	SSH     bool   `toml:"ssh"`
+	SSHKey  string `toml:"ssh_key"`
+	SSHUser string `toml:"ssh_user"`
 	// CPUs and Memory bound the sandbox and everything it starts: CPU time
 	// per second in cores (1.5 is one and a half cores) and bytes of memory
 	// (a size such as "2G", see ParseSize), swap excluded. On Linux they
@@ -371,6 +383,9 @@ func (c *Config) Resolve(name string) Profile {
 		UnsetEnv:      mergeList(base.UnsetEnv, sec.UnsetEnv, nil),
 		BindBinary:    pick(base.BindBinary, sec.BindBinary, true),
 		Podman:        pick(base.Podman, sec.Podman, false),
+		SSH:           pick(base.SSH, sec.SSH, false),
+		SSHKey:        pick(base.SSHKey, sec.SSHKey, ""),
+		SSHUser:       pick(base.SSHUser, sec.SSHUser, ""),
 		CPUs:          pick(base.CPUs, sec.CPUs, 0),
 		Memory:        pick(base.Memory, sec.Memory, ""),
 		TmpfsSize:     pick(base.TmpfsSize, sec.TmpfsSize, ""),

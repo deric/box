@@ -54,6 +54,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `box run podman ...`; the defaults allow the Docker Hub, quay.io and
   ghcr.io registries. `box df` lists the store and `box clean` removes it.
 
+- `ssh = true` lets a sandbox open SSH connections to `allow_hosts`, which
+  it could not before: the proxy now refuses `CONNECT` requests to port 22
+  unless the sandbox has it on, and with it `box` binds a generated
+  `ssh_config` into the sandbox (over `/etc/ssh/ssh_config` with the host's
+  content appended, `Include` lines commented out since ssh refuses files
+  that appear owned by `nobody` inside; or at `~/.ssh/config` on a host
+  without one) whose `ProxyCommand`, `box _connect %h %p`, tunnels the
+  connection through the proxy's unix socket. `ssh_key` names a host
+  private key to mount read-only at its own path and use as the identity,
+  `ssh_user` the user name to log in as, and a copy of the host's
+  `~/.ssh/known_hosts` is placed inside. Off by default; ignored with a
+  warning on macOS and in a sandbox without network.
+
 - `box run` refuses to start a command whose entry in a persistent overlay
   layer is a symlink to a path the host lacks, instead of failing inside the
   sandbox with `exec: "claude": executable file not found in $PATH`. That

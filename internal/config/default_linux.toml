@@ -137,6 +137,24 @@ bind_binary = true
 # layers are owned by a single user. See the README.
 podman = false
 
+# SSH. Off by default: the proxy refuses CONNECT requests to port 22, so
+# nothing inside can open an SSH connection. With ssh = true it lets them
+# through to allow_hosts, and box binds a generated ssh_config into the
+# sandbox (over /etc/ssh/ssh_config, with the host's content appended, or at
+# ~/.ssh/config when the host has none) whose ProxyCommand routes every
+# connection through the proxy. ssh_key names a private key on the host to
+# mount read-only at its own path and use as the identity; ssh_user the user
+# name to log in as. A copy of the host's ~/.ssh/known_hosts is placed inside,
+# so known hosts are trusted and new ones can be added without touching the
+# host's file. Neither key nor user has any effect while ssh = false. E.g.
+#
+# ssh = true
+# ssh_key = "~/.ssh/id_ed25519"
+# ssh_user = "git"
+ssh = false
+ssh_key = ""
+ssh_user = ""
+
 # Resource limits. cpus and memory are applied as a transient systemd scope
 # (a cgroup of the sandbox's own, named box-<binary>-<pid>.scope) that box
 # moves itself into before starting bwrap, so they cover the sandboxed
