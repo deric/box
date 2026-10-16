@@ -53,6 +53,7 @@ type Proxy struct {
 	Socket string   // unix socket on the host, bound into the sandbox
 	Log    string   // host file the proxy logs denied requests to
 	Allow  []string // allowed destination hosts
+	SSH    bool     // let CONNECT through to port 22 of allowed hosts
 }
 
 // DNS describes name resolution for a sandbox behind the proxy. Nothing
@@ -220,8 +221,9 @@ type Plan struct {
 	// Files lists host files held open on descriptors the runner inherits
 	// (copy_files), by descriptor number.
 	Files map[int]string
-	// Data lists generated files (the sandbox's resolv.conf) by the
-	// descriptor the runner reads them from, with their content.
+	// Data lists generated files (the sandbox's resolv.conf and
+	// ssh_config) by the descriptor the runner reads them from, with
+	// their content.
 	Data map[int]string
 	// Writes lists generated host files (podman's configuration), by path,
 	// with their content; they are written before running, after Dirs.
@@ -359,6 +361,9 @@ func (p *Plan) proxyArgs() []string {
 	args := []string{"_proxy", "-s", p.Proxy.Socket, "-l", p.Proxy.Log}
 	if p.DNS != nil {
 		args = append(args, "-d")
+	}
+	if p.Proxy.SSH {
+		args = append(args, "-ssh")
 	}
 	for _, h := range p.Proxy.Allow {
 		args = append(args, "-a", h)
@@ -674,6 +679,19 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			}
 		}
 	}
+	if prof.SSH {
+		if resolveLinks {
+			plan.Warnings = append(plan.Warnings, "ssh is not supported on this platform; ignored")
+		} else {
+			ms, err := sshMounts(prof, opts, plan)
+			if err != nil {
+				return nil, err
+			}
+			for _, m := range ms {
+				add(m)
+			}
+		}
+	}
 	if prof.Podman {
 		if resolveLinks {
 			plan.Warnings = append(plan.Warnings, "podman is not supported on this platform; ignored")
@@ -954,29 +972,41 @@ func resolvConfMount(plan *Plan) *mount {
 	for _, line := range rest {
 		b.WriteString(line + "\n")
 	}
-	content := b.String()
-	dest := resolvConf
-	if real, err := filepath.EvalSymlinks(resolvConf); err == nil {
-		dest = real
+	m, err := dataMount(plan, realPath(resolvConf), b.String(), 0o444)
+	if err != nil {
+		plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s not replaced in the sandbox: %v", resolvConf, err))
+		return nil
+	}
+	return m
+}
+
+// pipeCapacity is what a pipe holds without a reader, the default on
+// Linux; a generated file has to fit, since nothing reads it before the
+// runner starts.
+const pipeCapacity = 1 << 16
+
+// dataMount makes a generated file visible inside the sandbox: content is
+// written to a pipe whose read end the runner inherits (deliberately left
+// without close-on-exec) and binds read-only at dest with the given mode.
+func dataMount(plan *Plan, dest, content string, mode os.FileMode) (*mount, error) {
+	if len(content) > pipeCapacity {
+		return nil, fmt.Errorf("%s: %d bytes is more than a pipe holds (%d)", dest, len(content), pipeCapacity)
 	}
 	var p [2]int
 	if err := syscall.Pipe(p[:]); err != nil {
-		plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s not replaced in the sandbox: %v", resolvConf, err))
-		return nil
+		return nil, err
 	}
-	// The content fits the pipe buffer; the runner reads it to EOF.
-	_, err = syscall.Write(p[1], []byte(content))
+	_, err := syscall.Write(p[1], []byte(content))
 	_ = syscall.Close(p[1])
 	if err != nil {
 		_ = syscall.Close(p[0])
-		plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s not replaced in the sandbox: %v", resolvConf, err))
-		return nil
+		return nil, err
 	}
 	if plan.Data == nil {
 		plan.Data = map[int]string{}
 	}
 	plan.Data[p[0]] = content
-	return &mount{kind: kindData, dest: dest, fd: p[0], mode: 0o444}
+	return &mount{kind: kindData, dest: dest, fd: p[0], mode: mode}, nil
 }
 
 // passEnv returns the host variables selected by prof.PassEnv as KEY=VALUE

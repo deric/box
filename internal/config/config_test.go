@@ -450,3 +450,26 @@ dns = true
 		t.Error("dns should default to true without a config file")
 	}
 }
+
+func TestResolveSSH(t *testing.T) {
+	c, err := Parse(`
+[default]
+ssh_key = "~/.ssh/id_ed25519"
+
+[binaries.agent]
+ssh = true
+ssh_user = "git"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := c.Resolve("agent"); !p.SSH || p.SSHKey != "~/.ssh/id_ed25519" || p.SSHUser != "git" {
+		t.Errorf("agent: %+v", p)
+	}
+	if p := c.Resolve("other"); p.SSH || p.SSHKey != "~/.ssh/id_ed25519" || p.SSHUser != "" {
+		t.Errorf("ssh must be off unless set: %+v", p)
+	}
+	if p, _ := Parse(DefaultLinuxTOML); p.Resolve("claude").SSH {
+		t.Error("ssh must be off in the default configuration")
+	}
+}

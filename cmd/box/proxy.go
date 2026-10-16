@@ -33,6 +33,7 @@ func cmdProxy(argv []string) error {
 	sock := fs.String("s", "", "unix socket to listen on")
 	logPath := fs.String("l", "", "log file for denied requests")
 	dns := fs.Bool("d", false, "relay DNS queries to the host's resolver")
+	ssh := fs.Bool("ssh", false, "let CONNECT through to port 22 of allowed hosts")
 	var allow stringList
 	fs.Var(&allow, "a", "allowed host (repeatable)")
 	if err := fs.Parse(argv); err != nil {
@@ -84,11 +85,27 @@ func cmdProxy(argv []string) error {
 		_ = os.Remove(*sock)
 		os.Exit(0)
 	}()
-	srv := &proxy.Server{Allow: proxy.Allowlist(allow), Log: logger}
+	srv := &proxy.Server{Allow: proxy.Allowlist(allow), SSH: *ssh, Log: logger}
 	if *dns {
 		srv.DNS = &proxy.Resolver{}
 	}
 	return srv.Serve(ln)
+}
+
+// cmdConnect runs inside the sandbox as ssh's ProxyCommand (see
+// internal/sandbox/ssh.go): it asks the proxy, over its unix socket, for a
+// tunnel to host:port and relays stdin and stdout through it. A refusal
+// ends up on stderr, where ssh shows it.
+func cmdConnect(argv []string) error {
+	fs := flag.NewFlagSet("_connect", flag.ExitOnError)
+	sock := fs.String("s", sandbox.ProxySocket, "proxy unix socket")
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return fmt.Errorf("_connect: usage: box _connect [-s SOCKET] HOST PORT")
+	}
+	return proxy.Connect(*sock, net.JoinHostPort(fs.Arg(0), fs.Arg(1)), os.Stdin, os.Stdout)
 }
 
 // cmdNetns runs in the user and network namespaces unshare(1) created for

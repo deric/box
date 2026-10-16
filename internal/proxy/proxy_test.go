@@ -181,3 +181,73 @@ func TestForward(t *testing.T) {
 		t.Errorf("echoed %q", got)
 	}
 }
+
+func TestServerConnectSSHPort(t *testing.T) {
+	// A CONNECT to port 22 is refused unless SSH is set, allowlisted host or
+	// not; with it, the request passes the gate (and fails further on, as
+	// nothing listens on the port here).
+	sock := filepath.Join(t.TempDir(), "p.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	logs := &bytes.Buffer{}
+	srv := &Server{Allow: Allowlist{"127.0.0.1"}, Log: log.New(logs, "", 0)}
+	go func() { _ = srv.Serve(ln) }()
+
+	err = Connect(sock, "127.0.0.1:22", strings.NewReader(""), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "ssh is off") {
+		t.Errorf("CONNECT to port 22 should be refused with SSH off, got %v", err)
+	}
+	if !strings.Contains(logs.String(), "denied CONNECT 127.0.0.1:22 (ssh is off)") {
+		t.Errorf("log = %q", logs.String())
+	}
+	err = Connect(sock, "denied.example:22", strings.NewReader(""), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "not on the allowlist") {
+		t.Errorf("the allowlist applies first, got %v", err)
+	}
+
+	srv.SSH = true
+	err = Connect(sock, "127.0.0.1:22", strings.NewReader(""), io.Discard)
+	if err == nil || strings.Contains(err.Error(), "ssh is off") {
+		t.Errorf("with SSH set port 22 passes the gate, got %v", err)
+	}
+}
+
+func TestConnect(t *testing.T) {
+	// A TCP server that sends a banner first, like sshd, then echoes.
+	up, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = up.Close() }()
+	go func() {
+		c, err := up.Accept()
+		if err != nil {
+			return
+		}
+		_, _ = io.WriteString(c, "SSH-2.0-banner\r\n")
+		_, _ = io.Copy(c, c)
+		_ = c.Close()
+	}()
+	sock := filepath.Join(t.TempDir(), "p.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	srv := &Server{Allow: Allowlist{"127.0.0.1"}, SSH: true}
+	go func() { _ = srv.Serve(ln) }()
+
+	var out bytes.Buffer
+	if err := Connect(sock, up.Addr().String(), strings.NewReader("hello\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "SSH-2.0-banner\r\nhello\n" {
+		t.Errorf("relayed %q", got)
+	}
+	if err := Connect(filepath.Join(t.TempDir(), "none.sock"), "127.0.0.1:1", strings.NewReader(""), io.Discard); err == nil {
+		t.Error("want an error without a proxy socket")
+	}
+}

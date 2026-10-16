@@ -10,6 +10,7 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -48,10 +49,18 @@ func (a Allowlist) Match(host string) (allowed, exact bool) {
 	return allowed, false
 }
 
+// SSHPort is the port CONNECT requests are refused on unless Server.SSH
+// is set.
+const SSHPort = "22"
+
 // Server is an HTTP forward proxy (CONNECT and absolute-URI requests)
 // restricted to Allow.
 type Server struct {
 	Allow Allowlist
+	// SSH lets CONNECT through to SSHPort of allowed hosts, which is how
+	// ssh inside a sandbox reaches them (see Connect); off, such requests
+	// are denied like a host that is not on the allowlist.
+	SSH bool
 	// DNS, when set, answers queries relayed from the sandbox (see
 	// DNSForwarder); nil refuses them.
 	DNS *Resolver
@@ -151,6 +160,11 @@ func (s *Server) allow(w http.ResponseWriter, method, hostport, what string) boo
 
 func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	if !s.allow(w, r.Method, r.Host, r.Host) {
+		return
+	}
+	if _, port, _ := net.SplitHostPort(r.Host); port == SSHPort && !s.SSH {
+		s.logf("denied %s %s (ssh is off)", r.Method, r.Host)
+		http.Error(w, "box proxy: ssh is off for this sandbox; set ssh = true to allow it", http.StatusForbidden)
 		return
 	}
 	hj, ok := w.(http.Hijacker)
@@ -259,6 +273,42 @@ func Forward(ln net.Listener, path string) error {
 			splice(c, up, c)
 		}()
 	}
+}
+
+// Connect asks the proxy listening on the unix socket at path for a tunnel
+// to hostport and relays in to it and it to out, the way ssh expects of a
+// ProxyCommand: it returns once the far end closes, or with the proxy's
+// refusal, which carries its reason.
+func Connect(path, hostport string, in io.Reader, out io.Writer) error {
+	c, err := net.DialTimeout("unix", path, 10*time.Second)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Close() }()
+	if _, err := fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", hostport, hostport); err != nil {
+		return err
+	}
+	// The reader may run past the headers into what the far end sent
+	// first (an SSH banner); it is relayed from the same reader below.
+	br := bufio.NewReader(c)
+	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		return fmt.Errorf("%s: %w", hostport, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		reason, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		_ = resp.Body.Close()
+		if msg := strings.TrimSpace(string(reason)); msg != "" {
+			return fmt.Errorf("%s: %s", hostport, msg)
+		}
+		return fmt.Errorf("%s: %s", hostport, resp.Status)
+	}
+	go func() {
+		_, _ = io.Copy(c, in)
+		closeWrite(c)
+	}()
+	_, err = io.Copy(out, br)
+	return err
 }
 
 // splice copies between a and b in both directions, where ar is the reader
