@@ -624,6 +624,10 @@ func TestMatchResolvesSymlinks(t *testing.T) {
 	if got := c.Match(filepath.Join(link, "proj")); len(got) != 1 {
 		t.Errorf("a symlinked working directory should match the real path, got %v", got)
 	}
+	c = &Config{Profiles: []DirProfile{{Name: "link", Paths: []string{link}}}}
+	if got := c.Match(real); len(got) != 1 {
+		t.Errorf("a symlinked profile path should match the real working directory, got %v", got)
+	}
 }
 
 func TestResolveWithProfiles(t *testing.T) {

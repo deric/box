@@ -366,15 +366,11 @@ func LoadProfiles(dir string) ([]DirProfile, error) {
 
 // Match returns the profiles that apply to a sandbox started in dir: those
 // with a path that is dir or a parent of it, either as given or with
-// symlinks resolved. The profile with the deepest matching path comes
-// last, so it wins when they are merged in order; ties keep file name
-// order.
+// symlinks resolved on both sides (macOS keeps /var and /tmp as symlinks
+// into /private). The profile with the deepest matching path comes last,
+// so it wins when they are merged in order; ties keep file name order.
 func (c *Config) Match(dir string) []DirProfile {
-	dir = filepath.Clean(dir)
-	dirs := []string{dir}
-	if real, err := filepath.EvalSymlinks(dir); err == nil && real != dir {
-		dirs = append(dirs, real)
-	}
+	dirs := withRealPath(dir)
 	home, _ := os.UserHomeDir()
 	type match struct {
 		profile DirProfile
@@ -384,14 +380,16 @@ func (c *Config) Match(dir string) []DirProfile {
 	for _, p := range c.Profiles {
 		best := -1
 		for _, raw := range p.Paths {
-			root := expandPath(raw, home)
-			if root == "" {
+			expanded := expandPath(raw, home)
+			if expanded == "" {
 				continue
 			}
-			for _, d := range dirs {
-				if d == root || strings.HasPrefix(d, strings.TrimSuffix(root, "/")+"/") {
-					if n := strings.Count(root, "/"); n > best {
-						best = n
+			for _, root := range withRealPath(expanded) {
+				for _, d := range dirs {
+					if d == root || strings.HasPrefix(d, strings.TrimSuffix(root, "/")+"/") {
+						if n := strings.Count(root, "/"); n > best {
+							best = n
+						}
 					}
 				}
 			}
@@ -404,6 +402,17 @@ func (c *Config) Match(dir string) []DirProfile {
 	out := make([]DirProfile, len(matches))
 	for i, m := range matches {
 		out[i] = m.profile
+	}
+	return out
+}
+
+// withRealPath returns the cleaned path and, when it differs, the path
+// with symlinks resolved.
+func withRealPath(p string) []string {
+	p = filepath.Clean(p)
+	out := []string{p}
+	if real, err := filepath.EvalSymlinks(p); err == nil && real != p {
+		out = append(out, real)
 	}
 	return out
 }
