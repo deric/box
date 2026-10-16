@@ -184,8 +184,9 @@ func TestForward(t *testing.T) {
 
 func TestServerConnectSSHPort(t *testing.T) {
 	// A CONNECT to port 22 is refused unless SSH is set, allowlisted host or
-	// not; with it, the request passes the gate (and fails further on, as
-	// nothing listens on the port here).
+	// not; with it, the request passes the gate, and what happens then
+	// depends on whether an sshd listens on the port here (CI runners have
+	// one).
 	sock := filepath.Join(t.TempDir(), "p.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
@@ -210,7 +211,7 @@ func TestServerConnectSSHPort(t *testing.T) {
 
 	srv.SSH = true
 	err = Connect(sock, "127.0.0.1:22", strings.NewReader(""), io.Discard)
-	if err == nil || strings.Contains(err.Error(), "ssh is off") {
+	if err != nil && strings.Contains(err.Error(), "ssh is off") {
 		t.Errorf("with SSH set port 22 passes the gate, got %v", err)
 	}
 }
