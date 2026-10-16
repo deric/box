@@ -612,6 +612,24 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 	for _, p := range prof.RWBinds {
 		bind(p, kindRW)
 	}
+	if prof.RWParent {
+		// The parent of the working directory, for projects that reach
+		// into their siblings. Never the root or the home directory: the
+		// first would expose the whole host, the second undo the tmpfs
+		// $HOME.
+		parent := filepath.Dir(opts.Cwd)
+		switch {
+		case parent == opts.Cwd || parent == "/":
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("rw_parent ignored: the parent of %s is the root directory", opts.Cwd))
+		case parent == filepath.Clean(opts.Home):
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("rw_parent ignored: the parent of %s is the home directory", opts.Cwd))
+		default:
+			literal := func(string) (string, bool) { return parent, false }
+			if m := bindMount(literal, parent, kindRW, plan, resolveLinks); m != nil {
+				add(m)
+			}
+		}
+	}
 	for _, p := range prof.DevBinds {
 		bind(p, kindDev)
 	}

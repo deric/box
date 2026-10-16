@@ -7,6 +7,23 @@
 # The [default] section applies to every binary. A [binaries.<name>] section
 # overrides it for one binary: list values are appended to the defaults
 # (use drop_binds to remove inherited entries), scalar values replace them.
+#
+# Profiles in profile.d/ next to this file (created by `box init`) apply on
+# top of both when box is started in a directory under one of their paths. A profile is a TOML file
+# with a `paths` list followed by the same [default] and [binaries.<name>]
+# sections as this file, merged by the same rules; e.g. profile.d/work.toml:
+#
+#   paths = ["~/work"]
+#
+#   [default]
+#   rw_parent = true                      # the parent directory is read-write
+#   allow_hosts = ["gitlab.example.com"]
+#
+#   [binaries.claude]
+#   pass_env = ["WORK_*"]
+#
+# When several profiles match, the one with the deepest path is applied last
+# and so wins. `box config <command>` shows the profiles that apply here.
 
 [default]
 # Host paths mounted read-only.
@@ -18,6 +35,12 @@ ro_binds = [
 
 # Host paths mounted read-write.
 rw_binds = ["$PWD"]
+
+# Also mount the parent of the working directory read-write, for projects
+# that reach into their siblings (a checkout among related checkouts).
+# Ignored with a warning when that parent is / or the home directory.
+# Meant for profiles, where it applies only under the listed paths.
+rw_parent = false
 
 # Device paths mounted read-write with device access (e.g. "/dev/dri").
 dev_binds = []

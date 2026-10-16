@@ -15,7 +15,7 @@ box run claude                  # start `claude` in a sandbox
 ```sh
 box run claude --some-flag      # run claude sandboxed
 box show claude                 # print the sandbox command line without running it
-box config claude               # print the effective, merged profile
+box config claude               # print the effective, merged profile (and the profiles that apply here)
 box run podman build -t app .   # build an image in a sandbox of its own (see Podman)
 box clean claude                # drop claude's overlay layers, podman images and stale private /tmp dirs
 box df                          # disk usage per binary: overlay layers, podman images, private /tmp dirs, logs
@@ -116,9 +116,10 @@ warns and runs the sandbox without DNS; `box info` reports what it found.
 
 ## Configuration
 
-`box init` writes a commented default file. If the file already exists it is
-left untouched and a unified diff against the built-in defaults is printed
-instead; pass `-f` to overwrite it. The `[default]` section applies to
+`box init` writes a commented default file and creates the `profile.d/`
+directory next to it (see [Profiles](#profiles)). If the file already exists
+it is left untouched and a unified diff against the built-in defaults is
+printed instead; pass `-f` to overwrite it. The `[default]` section applies to
 every binary; `[binaries.<name>]` (the binary's base name) overrides it. List
 values are **appended** to the defaults, scalar values **replace** them, and
 `drop_binds` removes inherited entries from any mount list.
@@ -182,6 +183,7 @@ with `?` to skip silently.
 |-------------------|-------------------|----------------------------------------------------------------|
 | `ro_binds`        | list              | host paths mounted read-only                                   |
 | `rw_binds`        | list              | host paths mounted read-write                                  |
+| `rw_parent`       | bool              | also mount the parent of the working directory read-write (never `/` or `$HOME`); see [Profiles](#profiles) |
 | `dev_binds`       | list              | device paths (`--dev-bind`), e.g. `/dev/dri`                   |
 | `tmpfs`           | list              | fresh tmpfs mounts                                             |
 | `overlays`        | list              | `"path"` or `{ path, persist }`; `persist = false` discards writes on exit |
@@ -213,8 +215,50 @@ with `?` to skip silently.
 | `inherit`         | bool              | `false` ignores `[default]` for this binary                    |
 
 Locations: config at `$BOX_CONFIG`, else `$XDG_CONFIG_HOME/box/box.toml`, else
-`~/.config/box/box.toml`; overlay layers at `$XDG_STATE_HOME/box`, else
-`~/.local/state/box`.
+`~/.config/box/box.toml`; profiles in `profile.d/` next to it; overlay layers
+at `$XDG_STATE_HOME/box`, else `~/.local/state/box`.
+
+### Profiles
+
+A profile is a configuration that applies only when `box` is started in a
+directory under certain paths: looser network rules for work projects, a
+second checkout a project depends on, a tool that one tree needs. Profiles
+live in `~/.config/box/profile.d/` (next to `box.toml`, so `-c FILE` reads
+them from next to `FILE`; `box init` creates the directory), one
+`<name>.toml` per profile:
+
+```toml
+# ~/.config/box/profile.d/work.toml
+paths = ["~/work", "/srv/projects"]   # applies under any of these
+
+[default]
+rw_parent   = true                    # the parent of the working directory is read-write too
+allow_hosts = ["gitlab.example.com", "*.internal.example.com"]
+ssh         = true
+ssh_key     = "~/.ssh/id_work"
+
+[binaries.claude]
+pass_env = ["WORK_*"]
+```
+
+`paths` take `~`, `$HOME` and environment variables; a directory matches
+when it is one of them or lies underneath (symlinks in the working directory
+are resolved as well). The rest of the file has the same sections and keys
+as `box.toml` and is merged on top of it by the same rules: `[default]`
+first, then `[binaries.<name>]`, lists appended, scalars replaced,
+`drop_binds` removing entries inherited from `box.toml`. When several
+profiles match, the one with the deepest path is applied last and wins; with
+equal depth, file name order decides. `box config claude` names the profiles
+that apply in the current directory and prints the result, `box show` lists
+them in its output and `box info` the profiles found. A profile that does
+not parse, lists no `paths` or uses an unknown key stops `box` with an error
+naming the file.
+
+`rw_parent = true` mounts the parent of the working directory read-write in
+addition to `$PWD`, for a checkout that builds against its siblings. It is
+refused with a warning when that parent is `/` or the home directory, since
+either would undo most of the sandbox; a profile is the natural place for it,
+as it then applies only under the listed paths.
 
 ## Podman
 

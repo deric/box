@@ -42,7 +42,7 @@ Usage:
   box run [-n] [-v] [-c FILE] <command> [args...]   run command in a sandbox
   box show [-c FILE] <command> [args...]             print the sandbox command line
   box config [-c FILE] [<command>]                   print the effective profile
-  box init [-f] [-c FILE]                            write the default config file
+  box init [-f] [-c FILE]                            write the default config file and create profile.d
   box clean [-c FILE] [<command>]                    delete overlay layers, podman images, stale /tmp dirs and logs
   box df [-a] [-c FILE] [<command>]                  show disk usage of overlay layers, podman images, /tmp dirs and logs
   box ps [<command>]                                 list running sandboxes
@@ -157,11 +157,17 @@ func cmdRun(argv []string, dryRun bool) error {
 	if err != nil {
 		return err
 	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	binary := fs.Arg(0)
-	prof := cfg.Resolve(filepath.Base(binary))
+	profiles := cfg.Match(cwd)
+	prof := cfg.Resolve(filepath.Base(binary), profiles...)
 	plan, err := sandbox.Build(prof, sandbox.Options{
 		Binary:   binary,
 		Args:     fs.Args()[1:],
+		Cwd:      cwd,
 		StateDir: stateDir,
 	})
 	if err != nil {
@@ -171,6 +177,9 @@ func cmdRun(argv []string, dryRun bool) error {
 		fmt.Fprintln(os.Stderr, "box: warning:", w)
 	}
 	if dryRun {
+		for _, p := range profiles {
+			fmt.Printf("# profile %s applies: %s\n", p.Name, p.Path)
+		}
 		for _, f := range plan.WrittenFiles() {
 			fmt.Println("# written on the host first:", f)
 		}
@@ -181,6 +190,9 @@ func cmdRun(argv []string, dryRun bool) error {
 		return nil
 	}
 	if verbose {
+		for _, p := range profiles {
+			fmt.Fprintf(os.Stderr, "box: profile %s applies: %s\n", p.Name, p.Path)
+		}
 		if pc := plan.ProxyCommand(); pc != "" {
 			fmt.Fprintln(os.Stderr, "box:", pc)
 		}
@@ -215,8 +227,28 @@ func cmdConfig(argv []string) error {
 	if fs.NArg() > 0 {
 		name = filepath.Base(fs.Arg(0))
 	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	profiles := cfg.Match(cwd)
+	switch {
+	case len(profiles) > 0:
+		fmt.Printf("# profiles for %s: %s\n", cwd, describeProfiles(profiles))
+	case len(cfg.Profiles) > 0:
+		fmt.Printf("# no profile in %s matches %s\n", config.ProfileDir(path), cwd)
+	}
 	fmt.Printf("# effective profile for %s\n", name)
-	return toml.NewEncoder(os.Stdout).Encode(cfg.Resolve(name))
+	return toml.NewEncoder(os.Stdout).Encode(cfg.Resolve(name, profiles...))
+}
+
+// describeProfiles lists profiles as "work (/home/u/.config/box/profile.d/work.toml), ...".
+func describeProfiles(profiles []config.DirProfile) string {
+	parts := make([]string, len(profiles))
+	for i, p := range profiles {
+		parts[i] = p.Name + " (" + p.Path + ")"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func cmdInit(argv []string) error {
@@ -235,7 +267,14 @@ func cmdInit(argv []string) error {
 			return err
 		}
 	}
-	err := config.WriteDefault(path, force)
+	created, err := config.EnsureProfileDir(path)
+	if err != nil {
+		return err
+	}
+	if created {
+		fmt.Println("created", config.ProfileDir(path))
+	}
+	err = config.WriteDefault(path, force)
 	if errors.Is(err, config.ErrExists) {
 		fmt.Fprintf(os.Stderr, "%s already exists; diff against the built-in defaults (use -f to overwrite):\n", path)
 		differs, derr := config.DiffDefault(path, os.Stdout)
@@ -325,17 +364,12 @@ func removeTree(dir string) error {
 }
 
 // logDirs returns the proxy log directories cfg uses, the default section's
-// first, then those of binary sections that differ from it.
+// first, then those of binary sections and profiles that differ from it.
 func logDirs(cfg *config.Config) ([]string, error) {
-	names := make([]string, 0, len(cfg.Binaries))
-	for name := range cfg.Binaries {
-		names = append(names, name)
-	}
-	sort.Strings(names)
 	var dirs []string
 	seen := map[string]bool{}
-	for _, name := range append([]string{""}, names...) {
-		dir, err := sandbox.LogDir(cfg.Resolve(name), sandbox.Options{})
+	for _, e := range effectiveProfiles(cfg) {
+		dir, err := sandbox.LogDir(e.profile, sandbox.Options{})
 		if err != nil {
 			return nil, err
 		}
@@ -345,6 +379,45 @@ func logDirs(cfg *config.Config) ([]string, error) {
 		}
 	}
 	return dirs, nil
+}
+
+// labeled is an effective profile with the name it is listed under:
+// "" for the default section, the binary's name, and "work" or
+// "work/claude" for the sections of profile work.
+type labeled struct {
+	label   string
+	profile config.Profile
+}
+
+// effectiveProfiles resolves every combination the configuration can
+// produce: the default section, each binary, and both again under each
+// profile, in that order.
+func effectiveProfiles(cfg *config.Config) []labeled {
+	names := map[string]bool{}
+	for name := range cfg.Binaries {
+		names[name] = true
+	}
+	for _, p := range cfg.Profiles {
+		for name := range p.Binaries {
+			names[name] = true
+		}
+	}
+	sorted := make([]string, 0, len(names))
+	for name := range names {
+		sorted = append(sorted, name)
+	}
+	sort.Strings(sorted)
+	out := []labeled{{"", cfg.Resolve("")}}
+	for _, name := range sorted {
+		out = append(out, labeled{name, cfg.Resolve(name)})
+	}
+	for _, p := range cfg.Profiles {
+		out = append(out, labeled{p.Name, cfg.Resolve("", p)})
+		for _, name := range sorted {
+			out = append(out, labeled{p.Name + "/" + name, cfg.Resolve(name, p)})
+		}
+	}
+	return out
 }
 
 // cleanTmp removes private /tmp directories (see sandbox.TmpDir) and proxy
@@ -524,6 +597,7 @@ func cmdInfo(argv []string) error {
 		{"limits", sandbox.LimitsInfo()},
 		{"dns", sandbox.DNSInfo()},
 		{"config", configPath + configNote},
+		{"profiles", describeProfileDir(configPath, cfg)},
 		{"state dir", stateDir},
 		{"tmp root", sandbox.DefaultTmpRoot},
 		{"log dir", logDir},
@@ -538,31 +612,48 @@ func cmdInfo(argv []string) error {
 }
 
 // describeLogDirs renders the default log directory followed by the binaries
-// that use a different one, e.g. "/tmp/box (claude: /home/u/logs)".
+// and profiles that use a different one, e.g. "/tmp/box (claude: /home/u/logs)".
 func describeLogDirs(cfg *config.Config) (string, error) {
-	def, err := sandbox.LogDir(cfg.Resolve(""), sandbox.Options{})
-	if err != nil {
-		return "", err
-	}
-	names := make([]string, 0, len(cfg.Binaries))
-	for name := range cfg.Binaries {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	var extra []string
-	for _, name := range names {
-		dir, err := sandbox.LogDir(cfg.Resolve(name), sandbox.Options{})
+	all := effectiveProfiles(cfg)
+	dirs := make(map[string]string, len(all))
+	for _, e := range all {
+		dir, err := sandbox.LogDir(e.profile, sandbox.Options{})
 		if err != nil {
 			return "", err
 		}
-		if dir != def {
-			extra = append(extra, name+": "+dir)
+		dirs[e.label] = dir
+	}
+	def := dirs[""]
+	var extra []string
+	for _, e := range all[1:] {
+		// A binary under a profile is listed only when it differs from
+		// the profile's own default, like a binary from the default's.
+		parent := ""
+		if i := strings.Index(e.label, "/"); i >= 0 {
+			parent = e.label[:i]
+		}
+		if dir := dirs[e.label]; dir != dirs[parent] {
+			extra = append(extra, e.label+": "+dir)
 		}
 	}
 	if len(extra) > 0 {
 		def += " (" + strings.Join(extra, ", ") + ")"
 	}
 	return def, nil
+}
+
+// describeProfileDir renders the profile directory and the names of the
+// profiles found in it, e.g. "/home/u/.config/box/profile.d (work, home)".
+func describeProfileDir(configPath string, cfg *config.Config) string {
+	dir := config.ProfileDir(configPath)
+	if len(cfg.Profiles) == 0 {
+		return dir + " (none)"
+	}
+	names := make([]string, len(cfg.Profiles))
+	for i, p := range cfg.Profiles {
+		names[i] = p.Name
+	}
+	return dir + " (" + strings.Join(names, ", ") + ")"
 }
 
 // countSandboxes describes the running sandboxes as a total followed by a
