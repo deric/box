@@ -112,10 +112,12 @@ func TestBuildSSH(t *testing.T) {
 	}
 	cmd := " " + strings.Join(plan.Args, " ") + " "
 	for _, want := range []string{
-		// The key is bound by its real path at the configured one, read-only.
-		" --ro-bind " + keyReal + " " + keyLink + " ",
+		// The key is bound by its real path at the configured one, read-only;
+		// the config is bound over the file the host path resolves to (on
+		// macOS the temporary directory itself sits behind a symlink).
+		" --ro-bind " + realPath(keyReal) + " " + keyLink + " ",
 		" --perms 0644 --file " + strconv.Itoa(knownFD) + " " + known + " ",
-		" --perms 0644 --ro-bind-data " + strconv.Itoa(fd) + " " + hostConf + " ",
+		" --perms 0644 --ro-bind-data " + strconv.Itoa(fd) + " " + realPath(hostConf) + " ",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("missing %q in\n%s", want, cmd)
