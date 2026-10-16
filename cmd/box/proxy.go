@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -207,6 +209,11 @@ func cmdForward(argv []string) error {
 	sigs := make(chan os.Signal, 8)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2)
 	if err := cmd.Start(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			if detail := notFoundDetail(fs.Arg(0)); detail != "" {
+				return fmt.Errorf("%w: %s", err, detail)
+			}
+		}
 		return err
 	}
 	go func() {
@@ -237,4 +244,38 @@ func cmdForward(argv []string) error {
 		os.Exit(ee.ExitCode())
 	}
 	return err
+}
+
+// notFoundDetail explains a command that $PATH does not yield inside the
+// sandbox although an entry for it is there: a symlink whose target the
+// sandbox does not see. That is what a persistent overlay shows after the
+// program updated itself inside an earlier sandbox (the new version landed
+// in the tmpfs $HOME, the symlink in the layer); box run checks for it on
+// the host first, this is the fallback. Empty when there is nothing to add.
+func notFoundDetail(name string) string {
+	var dirs []string
+	if strings.Contains(name, string(filepath.Separator)) {
+		dirs = []string{""}
+	} else {
+		dirs = filepath.SplitList(os.Getenv("PATH"))
+	}
+	for _, d := range dirs {
+		p := filepath.Join(d, name)
+		if d == "" {
+			p = name
+		}
+		fi, err := os.Lstat(p)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		target, err := os.Readlink(p)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			continue
+		}
+		return fmt.Sprintf("%s points at %s, which does not exist inside the sandbox", p, target)
+	}
+	return ""
 }

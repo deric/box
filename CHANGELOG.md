@@ -54,6 +54,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `box run podman ...`; the defaults allow the Docker Hub, quay.io and
   ghcr.io registries. `box df` lists the store and `box clean` removes it.
 
+- `box run` refuses to start a command whose entry in a persistent overlay
+  layer is a symlink to a path the host lacks, instead of failing inside the
+  sandbox with `exec: "claude": executable file not found in $PATH`. That
+  is what remains after claude updates itself inside: the new version
+  lands in the tmpfs `$HOME` and vanishes, the repointed `~/.local/bin/claude`
+  symlink persists in the layer. The error names the version the symlink
+  points at and the one on the host and suggests `claude update` on the
+  host (or `box clean <name>` to drop the layer). An entry removed inside
+  is reported the same way. When a command still fails to exec inside, the
+  forwarder's error now names the dangling symlink and its target.
+
 ## [0.3.0] - 2026-10-15
 
 ### Added

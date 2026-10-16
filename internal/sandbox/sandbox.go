@@ -730,6 +730,9 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 	if !filepath.IsAbs(resolved) {
 		resolved = filepath.Join(opts.Cwd, resolved)
 	}
+	if err := staleBinary(mounts, resolved, plan.Name); err != nil {
+		return nil, err
+	}
 	var expose []string
 	if prof.BindBinary {
 		expose = append(expose, resolved)
@@ -1043,6 +1046,70 @@ func depth(p string) int {
 		return 0
 	}
 	return strings.Count(p, "/")
+}
+
+// updateHint names the command that installs a program's current version
+// on the host, for the programs box knows to update themselves.
+var updateHint = map[string]string{"claude": "claude update"}
+
+// staleBinary reports why the resolved command would not run inside the
+// sandbox although the host runs it: it lives under a persistent overlay
+// whose upper layer carries an entry of its own for it, written inside an
+// earlier sandbox, and that entry hides the host's. A program that updates
+// itself inside the sandbox (claude does) replaces the symlink in ~/.local/bin,
+// which persists in the layer, while the new version lands in the tmpfs
+// $HOME and is gone when the sandbox exits; the next run then execs a
+// dangling symlink and fails with "executable file not found in $PATH". The
+// error names the version inside and the one on the host, and how to
+// recover. It is nil when the layer leaves the command alone, or when its
+// entry is one that works.
+func staleBinary(mounts []*mount, resolved, name string) error {
+	for _, m := range mounts {
+		if m.kind != kindOverlay || m.upper == "" || !under(resolved, m.src) {
+			continue
+		}
+		rel, err := filepath.Rel(m.src, resolved)
+		if err != nil {
+			continue
+		}
+		entry := filepath.Join(m.upper, rel)
+		fi, err := os.Lstat(entry)
+		if err != nil {
+			continue // untouched inside: the host's entry shows through
+		}
+		clean := fmt.Sprintf("`box clean %s` to drop the overlay layer and start over from the host's installation", name)
+		if fi.Mode()&os.ModeCharDevice != 0 {
+			return fmt.Errorf("%s was removed inside the sandbox (overlay layer %s); run %s", resolved, m.upper, clean)
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			return nil
+		}
+		inside, err := os.Readlink(entry)
+		if err != nil {
+			return nil
+		}
+		target := inside
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(resolved), target)
+		}
+		if _, err := os.Stat(target); err == nil {
+			return nil
+		}
+		host := "nothing"
+		if t, err := os.Readlink(resolved); err == nil {
+			host = t
+		} else if _, err := os.Stat(resolved); err == nil {
+			host = "a regular file"
+		}
+		fix := "install that version on the host"
+		if cmd, ok := updateHint[name]; ok {
+			fix = fmt.Sprintf("run `%s` on the host so it has that version too", cmd)
+		}
+		return fmt.Errorf("%s: inside the sandbox it points at %s, which does not exist on the host (the host's points at %s): "+
+			"the command was updated inside an earlier sandbox and the new version did not persist; %s, or %s",
+			resolved, inside, host, fix, clean)
+	}
+	return nil
 }
 
 func layerName(p string) string {
