@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-10-26
 
 ### Added
 
@@ -64,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   host (or `box clean <name>` to drop the layer). An entry removed inside
   is reported the same way. When a command still fails to exec inside, the
   forwarder's error now names the dangling symlink and its target.
+
+[Full changelog]: https://github.com/deric/box/compare/v0.3.0...v0.4.0
 
 ## [0.3.0] - 2026-10-15
 
