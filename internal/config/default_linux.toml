@@ -104,7 +104,7 @@ allow_hosts = [
   "github.com", "*.github.com", "*.githubusercontent.com", "gitlab.com",
   "go.dev", "*.golang.org", "pypi.org",
   "icinga.com", "index.rubygems.org",
-  "orca.security",
+  "orca.security", "openwall.com",
   "hub.docker.io",
   "nginx.org","nvd.nist.gov",
   "registry.npmjs.org", "rubygems.org", "registry.dagger.io",
@@ -114,6 +114,7 @@ allow_hosts = [
   "production.cloudflare.docker.com",
   "quay.io", "*.quay.io", "ghcr.io",
   "registry.fedoraproject.org", "registry.access.redhat.com",
+  "www.securityfocus.com",
 ]
 
 # Hostname inside the sandbox (empty keeps the host name).
