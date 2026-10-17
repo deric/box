@@ -26,8 +26,8 @@ import (
 // ssh_key is mounted read-only at its own path and set as IdentityFile,
 // ssh_user as User, and a copy of the host's ~/.ssh/known_hosts is placed
 // inside so known hosts are trusted and new ones can be added without
-// touching the host's file. With network = true ssh connects directly and
-// only the key, user and known hosts are set up.
+// touching the host's file. With network = true or pasta = true ssh
+// connects directly and only the key, user and known hosts are set up.
 
 // sshConfig is the host's system-wide client configuration, which the
 // generated one is bound over; tests replace it.
@@ -55,9 +55,16 @@ func sshMounts(prof config.Profile, opts *Options, plan *Plan) ([]*mount, error)
 	}
 
 	var b strings.Builder
-	b.WriteString("# Written by box: ssh connections go through its proxy to allow_hosts.\n")
+	switch {
+	case plan.proxyInside():
+		b.WriteString("# Written by box: ssh connections go through its proxy to allow_hosts.\n")
+	case plan.Pasta != nil:
+		b.WriteString("# Written by box: ssh connects through pasta; only allow_hosts resolve.\n")
+	default:
+		b.WriteString("# Written by box.\n")
+	}
 	b.WriteString("Host *\n")
-	if plan.Proxy != nil {
+	if plan.proxyInside() {
 		plan.Proxy.SSH = true
 		b.WriteString("\tProxyCommand " + shellQuote(opts.Self) + " _connect %h %p\n")
 	}

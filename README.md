@@ -39,7 +39,7 @@ box doctor                      # check the host for everything box needs and sa
 | `~/.claude` (claude only)        | temporary overlay: host content visible, writes discarded on exit; `projects/` and `.credentials.json` read-write |
 | `~/.claude/skills`, `~/.claude/plugins`, `~/.agents/skills` (claude only) | persistent overlays: the host's skills and plugins are visible, ones installed inside land in the per-binary upper layer |
 | `~/.claude.json` (claude only)   | private copy of the host file                        |
-| network                          | own empty namespace; HTTP(S) only through an allowlisting proxy on the host (`allow_hosts`); DNS through the proxy to the host's resolver (`dns`) |
+| network                          | own empty namespace; HTTP(S) only through an allowlisting proxy on the host (`allow_hosts`); DNS through the proxy to the host's resolver (`dns`); or, with `pasta`, an interface of its own whose firewall only admits what the allowed names resolve to |
 | `/proc`, `/dev`                  | fresh, minimal                                       |
 | PID, IPC, UTS, cgroup namespaces | unshared; hostname is `box`                          |
 | user namespaces                  | cannot be created inside (`--disable-userns`)        |
@@ -115,6 +115,45 @@ leave a sandbox without a resolver, which closes that channel. Where the
 namespaces cannot be set up (no `unshare`, user namespaces disabled) `box`
 warns and runs the sandbox without DNS; `box info` reports what it found.
 
+#### The pasta backend
+
+The proxy only carries HTTP, HTTPS and (with `ssh = true`) SSH, and only
+for programs that honour the proxy variables. With `pasta = true` the
+sandbox gets a network interface of its own instead, from
+[pasta](https://passt.top) (package `passt`), which translates the
+sandbox's traffic into ordinary sockets on the host without privileges, so
+any protocol works inside: ssh, git over ssh, gRPC, QUIC, WebSockets, and
+programs that know nothing of proxies. `allow_hosts` is then enforced by
+name resolution. `box` loads an nftables firewall into the sandbox's
+network namespace (with `nft`, package `nftables`) that rejects every
+outgoing connection except to loopback and to the addresses in its allow
+sets, and runs its own resolver there, outside the sandbox proper and
+with `CAP_NET_ADMIN` kept: it answers only queries for names on
+`allow_hosts`, relaying them to the host's resolver through the proxy
+process as before, and admits the addresses it hands out into the allow
+sets for their time to live (15 minutes at least); established
+connections keep going after that. Every other name gets `NXDOMAIN` and a
+`denied DNS <name>` line in the log, which `box top` counts like a denied
+request, and a connection to an address that was never resolved is
+rejected on the spot. As with the proxy, a name that matches only through
+a wildcard may not resolve to a loopback or link-local address.
+
+pasta is told to forward no port in either direction and not to map the
+host's loopback, so nothing on the host is reachable from inside and
+nothing inside is exposed, and the sandboxed program runs in bwrap's
+nested user namespace, which has no say over the firewall. The proxy
+still runs on the host, but its socket is not bound into the sandbox and
+no proxy variables are set. Since the firewall works by address, every
+port of an allowed host is reachable: `ssh = false` does not keep ssh
+out, and `ssh = true` only sets the key, user and known hosts up, as with
+`network = true`. The backend needs `pasta`, `nft`, `unshare` and a
+kernel with nftables and conntrack available to an unprivileged namespace
+(the `nf_tables`, `nft_ct`, `nf_conntrack` and `nft_reject_inet` modules
+loaded, which any host running a firewall has). `box doctor` checks all
+of that and attaches pasta to a throwaway namespace; where something is
+missing the sandbox falls back to the proxy with a warning. `box show`
+prints the `box _netns -pasta` step that prepares the namespace.
+
 ## Configuration
 
 `box init` writes a commented default file and creates the `profile.d/`
@@ -135,6 +174,7 @@ overlays = [{ path = "~/.local/share/mise", persist = true }, { path = "?~/.loca
 network  = false
 proxy    = true
 dns      = true
+pasta    = false
 allow_hosts = ["github.com", "*.github.com", "registry.npmjs.org"]
 cpus     = 1
 memory   = "2G"
@@ -169,6 +209,9 @@ inherit    = true            # set false to ignore [default] entirely
 
 [binaries.quiet-tool]
 dns        = false           # proxy only, no name resolution
+
+[binaries.native-tool]
+pasta      = true            # any protocol to allow_hosts, through pasta
 
 [binaries.build-tool]
 cpus       = 4               # more room: four cores, 8 GiB, no tmpfs cap
@@ -344,6 +387,26 @@ instead. With `network = true` ssh connects directly and only the key, user
 and known hosts are set up; with `proxy = false` there is no network to
 reach and `ssh` is ignored with a warning. `box show` prints the generated
 file and the `-ssh` flag of the proxy.
+
+
+## DNS
+
+In order to make the DNS isolation work, updating apparmor profile might be needed.
+
+Check `box doctor` to inspect system capabilities.
+
+```bash
+sudo tee /etc/apparmor.d/unshare-userns <<'EOF'
+abi <abi/5.0>,
+include <tunables/global>
+
+profile unshare /usr/bin/unshare flags=(unconfined) {
+  userns,
+  include if exists <local/unshare-userns>
+}
+EOF
+sudo apparmor_parser -r /etc/apparmor.d/unshare-userns
+```
 
 ## macOS
 

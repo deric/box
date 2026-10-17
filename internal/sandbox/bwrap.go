@@ -61,7 +61,7 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 	for _, k := range prof.UnsetEnv {
 		args = append(args, "--unsetenv", k)
 	}
-	if plan.Proxy != nil {
+	if plan.proxyInside() {
 		for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
 			if _, set := prof.Env[k]; !set {
 				args = append(args, "--setenv", k, "http://"+ProxyAddr)
@@ -86,10 +86,10 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 		// podman's pause process and writes sync_files back on exit,
 		// running the command as its child.
 		args = append(args, "--", plan.Self, "_forward")
-		if plan.Proxy != nil {
+		if plan.proxyInside() {
 			args = append(args, "-s", ProxySocket, "-l", ProxyAddr)
 		}
-		if plan.DNS != nil {
+		if plan.DNS != nil && plan.DNS.UDPFD >= 0 {
 			args = append(args, "-u", strconv.Itoa(plan.DNS.UDPFD), "-t", strconv.Itoa(plan.DNS.TCPFD))
 		}
 		if plan.Pause != "" {

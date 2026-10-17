@@ -288,19 +288,28 @@ func (f *DNSForwarder) answer(msg []byte, tcp bool) []byte {
 // set and the response code SERVFAIL, followed by its question section as
 // it was.
 func ServFail(query []byte) []byte {
-	if len(query) < 12 {
-		return nil
-	}
-	resp := append([]byte(nil), query...)
-	resp[2] = resp[2]&0x79 | 0x80 // QR=1; keep opcode and RD; clear AA, TC
-	resp[3] = 0x82                // RA=1, Z/AD/CD=0, RCODE=2 (SERVFAIL)
-	binary.BigEndian.PutUint16(resp[6:], 0)
-	binary.BigEndian.PutUint16(resp[8:], 0)
-	return resp
+	return errorResponse(query, rcodeServFail)
 }
 
 // ServeUDP answers queries on pc until it is closed.
 func (f *DNSForwarder) ServeUDP(pc net.PacketConn) error {
+	return (&dnsServer{answer: f.answer}).serveUDP(pc)
+}
+
+// ServeTCP answers queries on connections accepted from ln until it is
+// closed. A connection may carry several queries; it is dropped after 10s
+// without one.
+func (f *DNSForwarder) ServeTCP(ln net.Listener) error {
+	return (&dnsServer{answer: f.answer}).serveTCP(ln)
+}
+
+// dnsServer serves DNS on listeners, computing each response with answer;
+// a nil response is not sent (and ends a TCP connection).
+type dnsServer struct {
+	answer func(msg []byte, tcp bool) []byte
+}
+
+func (s *dnsServer) serveUDP(pc net.PacketConn) error {
 	buf := make([]byte, DNSMaxMessage)
 	for {
 		n, addr, err := pc.ReadFrom(buf)
@@ -312,17 +321,14 @@ func (f *DNSForwarder) ServeUDP(pc net.PacketConn) error {
 		}
 		msg := append([]byte(nil), buf[:n]...)
 		go func() {
-			if resp := f.answer(msg, false); resp != nil {
+			if resp := s.answer(msg, false); resp != nil {
 				_, _ = pc.WriteTo(resp, addr)
 			}
 		}()
 	}
 }
 
-// ServeTCP answers queries on connections accepted from ln until it is
-// closed. A connection may carry several queries; it is dropped after 10s
-// without one.
-func (f *DNSForwarder) ServeTCP(ln net.Listener) error {
+func (s *dnsServer) serveTCP(ln net.Listener) error {
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -331,11 +337,11 @@ func (f *DNSForwarder) ServeTCP(ln net.Listener) error {
 			}
 			return err
 		}
-		go f.serveConn(c)
+		go s.serveConn(c)
 	}
 }
 
-func (f *DNSForwarder) serveConn(c net.Conn) {
+func (s *dnsServer) serveConn(c net.Conn) {
 	defer func() { _ = c.Close() }()
 	for {
 		_ = c.SetDeadline(time.Now().Add(10 * time.Second))
@@ -343,7 +349,7 @@ func (f *DNSForwarder) serveConn(c net.Conn) {
 		if err != nil {
 			return
 		}
-		resp := f.answer(msg, true)
+		resp := s.answer(msg, true)
 		if resp == nil {
 			return
 		}

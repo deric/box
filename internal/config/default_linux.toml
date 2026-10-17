@@ -91,13 +91,27 @@ sync_files = []
 # Answers are not filtered by allow_hosts, so a program can look up any
 # name even though it can only connect to the listed hosts; set dns =
 # false to leave the sandbox without a resolver.
+#
+# With pasta = true the sandbox gets a network interface of its own from
+# pasta(1) (package passt) instead of the HTTP proxy, so any protocol works
+# inside: ssh, git over ssh, gRPC, QUIC, ... allow_hosts is then enforced by
+# name resolution: box's resolver inside answers only names on the list and
+# admits the addresses it hands out through an nftables firewall in the
+# sandbox's network namespace (loaded with nft, package nftables); every
+# other name gets NXDOMAIN and a line in the log, and a connection to an
+# address that was never resolved is rejected. Nothing on the host is
+# reachable and no port inside is exposed. Needs pasta, nft and unshare;
+# without them the sandbox falls back to the proxy with a warning. Note
+# that ssh = false does not keep ssh out with pasta: every port of an
+# allowed host is reachable. See the README for the details.
 network = false
 proxy = true
 dns = true
+pasta = false
 log_dir = "/tmp/box"
 allow_hosts = [
   "api.dagger.cloud", "apt.voxpupuli.org",
-  "*.centos.org", "crates.io", "*.crates.io",
+  "*.centos.org", "crates.io", "*.crates.io", "crt.sh",
   "*.debian.org", "dl.google.com",
   "files.pythonhosted.org", "forge.puppet.com", "forgeapi.puppet.com",
   "hex.pm",
@@ -252,3 +266,6 @@ podman = true
 #
 # [binaries.quiet-tool]
 # dns = false               # proxy only, no name resolution
+#
+# [binaries.native-tool]
+# pasta = true              # any protocol to allow_hosts, through pasta

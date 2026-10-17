@@ -64,6 +64,9 @@ type Server struct {
 	// DNS, when set, answers queries relayed from the sandbox (see
 	// DNSForwarder); nil refuses them.
 	DNS *Resolver
+	// Pasta, when set, attaches pasta(1) to the namespaces of the given
+	// process on request (see PastaPath); nil refuses such requests.
+	Pasta func(pid int) error
 	// Log receives denied and failed requests; nil discards them.
 	Log *log.Logger
 	// DialTimeout bounds connecting to a destination; zero means 30s.
@@ -115,6 +118,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.dns(w, r)
+		return
+	}
+	if !r.URL.IsAbs() && r.URL.Path == PastaPath {
+		s.pasta(w, r)
 		return
 	}
 	if !r.URL.IsAbs() {

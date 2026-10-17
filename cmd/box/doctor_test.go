@@ -97,13 +97,16 @@ ssh_key = "~/.ssh/id_work"
 
 [binaries.podman]
 podman = true
+
+[binaries.git]
+pasta = true
 `)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.Profiles = []config.DirProfile{{Name: "work", Binaries: map[string]config.Section{"git": {}}}}
 	u := featureUsage(cfg)
-	if !u.overlays || !u.dns || !u.cpu || !u.memory || !u.podman || !u.ssh {
+	if !u.overlays || !u.dns || !u.cpu || !u.memory || !u.podman || !u.ssh || !u.pasta {
 		t.Errorf("features = %+v, want every feature on", u)
 	}
 	if got := strings.Join(u.binaries, ","); got != "claude,git,podman" {

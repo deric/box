@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `pasta = true` gives a sandbox a network interface of its own through
+  [pasta](https://passt.top) instead of the HTTP proxy, so any protocol
+  reaches `allow_hosts`: ssh, git over ssh, gRPC, QUIC, and programs that
+  ignore proxy variables. The allowlist is enforced by name resolution:
+  `box` loads an nftables firewall into the sandbox's network namespace
+  that rejects every outgoing connection except to admitted addresses, and
+  its resolver inside (`box _filter`, started by `box _netns -pasta` with
+  `CAP_NET_ADMIN`) answers only names on `allow_hosts` and admits what they
+  resolve to for their time to live. Other names get `NXDOMAIN` and a
+  `denied DNS <name>` log line that `box top` counts. pasta forwards no
+  ports and does not map the host's loopback. Needs `pasta`, `nft` and
+  `unshare`; without them the sandbox falls back to the proxy with a
+  warning. `box doctor` checks the pieces and attaches pasta to a throwaway
+  namespace, `box info` shows a `pasta` line, and `box show` prints the
+  `_netns -pasta` step. The default configuration keeps the proxy.
+
 ## [0.5.0] - 2026-10-17
 
 ### Added
