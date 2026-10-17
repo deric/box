@@ -233,27 +233,38 @@ func sameLimit(got, want string) bool {
 	return got == want
 }
 
-// LimitsInfo describes how resource limits are applied on this host: the
-// systemd user manager and the controllers delegated to it, or why it is
-// out of reach.
-func LimitsInfo() string {
+// LimitsStatus reports the cgroup controllers delegated to the systemd
+// user manager, sorted, or an error when the manager is unreachable or the
+// delegation cannot be read.
+func LimitsStatus() ([]string, error) {
 	conn, _, err := connectUserManager()
 	if err != nil {
-		return "not available: " + err.Error()
+		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
-	info := "cgroups v2 via the systemd user manager"
 	v, err := conn.Object(systemdDest, systemdPath).GetProperty(systemdManager + ".ControlGroup")
 	if err != nil {
-		return info
+		return nil, fmt.Errorf("reading the manager's cgroup: %w", err)
 	}
 	cg, _ := v.Value().(string)
 	b, err := os.ReadFile(filepath.Join(cgroupRoot, cg, "cgroup.subtree_control"))
 	if err != nil {
-		return info
+		return nil, fmt.Errorf("reading delegated controllers: %w", err)
 	}
 	controllers := strings.Fields(string(b))
 	sort.Strings(controllers)
+	return controllers, nil
+}
+
+// LimitsInfo describes how resource limits are applied on this host: the
+// systemd user manager and the controllers delegated to it, or why it is
+// out of reach.
+func LimitsInfo() string {
+	controllers, err := LimitsStatus()
+	if err != nil {
+		return "not available: " + err.Error()
+	}
+	info := "cgroups v2 via the systemd user manager"
 	if len(controllers) == 0 {
 		return info + " (no controllers delegated)"
 	}

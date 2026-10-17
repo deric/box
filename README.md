@@ -23,6 +23,7 @@ box df -a claude                # the same listing every layer, /tmp dir and log
 box ps                          # list running sandboxes with process count, CPU, memory
 box top                         # the same as a live view that refreshes every second, plus what the proxy denied
 box info                        # print version, isolation mechanism, config path, log dir, running sandboxes
+box doctor                      # check the host for everything box needs and say how to fix what is missing
 ```
 
 ## Defaults (Linux)
@@ -395,6 +396,19 @@ release and is what other agent sandboxes build on.
   for the `podman` option; its image store also relies on unprivileged
   overlayfs.
 - Go 1.24 or newer to build: `go build -o box ./cmd/box`
+
+`box doctor` checks all of this on the host it runs on: it looks for
+`bwrap` (or `sandbox-exec`) and its version, starts an empty sandbox and
+mounts an overlay inside one, probes `unshare` for DNS and the systemd user
+manager and its delegated controllers for limits, loads the configuration
+and the profiles, makes sure the state directory and `/tmp/box` are
+writable, and looks for the binaries the configuration has sections for,
+`podman` with an OCI runtime and `ssh` with the configured keys where a
+profile enables them. Every check prints `ok`, `warn` (`box` works with
+reduced features) or `FAIL` (`box run` cannot work) with what was found and,
+for the latter two, how to fix it; it exits non-zero when anything failed.
+Checks of features no profile uses are left out. On a terminal the statuses
+are colored unless `NO_COLOR` is set.
 
 ### Install with Go
 

@@ -48,6 +48,7 @@ Usage:
   box ps [<command>]                                 list running sandboxes
   box top [-i DURATION] [-c FILE] [<command>]        watch running sandboxes and denied connections
   box info [-c FILE]                                 print version, isolation mechanism, limits, config path, log dir
+  box doctor [-c FILE]                               check the host for everything box needs and say how to fix what is missing
   box version
 
 Flags:
@@ -87,6 +88,8 @@ func main() {
 		err = cmdTop(os.Args[2:])
 	case "info":
 		err = cmdInfo(os.Args[2:])
+	case "doctor":
+		err = cmdDoctor(os.Args[2:])
 	case "_proxy":
 		err = cmdProxy(os.Args[2:])
 	case "_forward":
