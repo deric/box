@@ -54,16 +54,22 @@ jobs:
           awk '$2 == "sleep" { found = 1 } END { exit !found }' ps.out
           wait
 
-  # Red Hat family: Fedora and a RHEL 10 clone, in containers on the Ubuntu
-  # runner. Besides tests and build this is where the bwrap sandbox gets its
-  # end-to-end check on Linux, since the images ship a bubblewrap new enough
-  # for overlays (0.10+).
-  test-redhat:
+  # Linux distributions in containers on the Ubuntu runner: Fedora, a RHEL 10
+  # clone and Debian. Besides tests and build this is where the bwrap sandbox
+  # gets its end-to-end check on Linux; every image ships a bubblewrap new
+  # enough for overlays (0.10+).
+  test-linux:
     name: test (${{ matrix.image }})
     strategy:
       fail-fast: false
       matrix:
-        image: ["fedora:latest", "almalinux:10"]
+        include:
+          - image: fedora:latest
+            install: dnf install -y --setopt=install_weak_deps=False git-core tar gzip gawk diffutils shadow-utils bubblewrap util-linux
+          - image: almalinux:10
+            install: dnf install -y --setopt=install_weak_deps=False git-core tar gzip gawk diffutils shadow-utils bubblewrap util-linux
+          - image: debian:latest
+            install: apt-get update && apt-get install -y --no-install-recommends git ca-certificates bubblewrap
     runs-on: ubuntu-latest
     container:
       image: ${{ matrix.image }}
@@ -72,7 +78,9 @@ jobs:
       options: --privileged
     steps:
       - name: Install dependencies
-        run: dnf install -y --setopt=install_weak_deps=False git-core tar gzip gawk diffutils shadow-utils bubblewrap util-linux
+        run: ${{ matrix.install }}
+        env:
+          DEBIAN_FRONTEND: noninteractive
       - uses: actions/checkout@v7
       - name: Let root use the checkout
         # The workspace belongs to the runner's user while the container runs
