@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -125,27 +126,43 @@ func dropCapabilities() error {
 	return nil
 }
 
-// DNSInfo describes how DNS is provided to sandboxes on this host: the
-// unshare(1) that creates their network namespace, or why DNS is out of
-// reach.
-func DNSInfo() string {
-	unshare, err := lookupUnshare()
+// DNSStatus checks that DNS can be provided to sandboxes on this host: it
+// finds unshare(1) and probes that it can create the user and network
+// namespaces box needs. It returns the path of unshare and the util-linux
+// version it reports (empty when unknown); the error says why DNS is out
+// of reach, and ErrNoUnshare when unshare is not installed.
+func DNSStatus() (unshare, version string, err error) {
+	unshare, err = lookupUnshare()
 	if err != nil {
-		return "not available: unshare not found; install util-linux"
+		return "", "", ErrNoUnshare
+	}
+	// Prints "unshare from util-linux 2.41.5".
+	if out, err := exec.Command(unshare, "--version").Output(); err == nil {
+		if f := strings.Fields(string(out)); len(f) >= 4 {
+			version = f[len(f)-1]
+		}
 	}
 	self, err := os.Executable()
 	if err == nil {
 		err = probeNetns(unshare, self)
 	}
+	return unshare, version, err
+}
+
+// ErrNoUnshare is returned by DNSStatus when unshare(1) is not installed.
+var ErrNoUnshare = errors.New("unshare not found; install util-linux")
+
+// DNSInfo describes how DNS is provided to sandboxes on this host: the
+// unshare(1) that creates their network namespace, or why DNS is out of
+// reach.
+func DNSInfo() string {
+	unshare, version, err := DNSStatus()
 	if err != nil {
 		return "not available: " + err.Error()
 	}
 	info := "via the proxy, in a network namespace from " + unshare
-	// Prints "unshare from util-linux 2.41.5".
-	if out, err := exec.Command(unshare, "--version").Output(); err == nil {
-		if f := strings.Fields(string(out)); len(f) >= 4 {
-			info += " (util-linux " + f[len(f)-1] + ")"
-		}
+	if version != "" {
+		info += " (util-linux " + version + ")"
 	}
 	return info
 }

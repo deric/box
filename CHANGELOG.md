@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `box doctor` checks the host for everything `box` needs and says how to
+  fix what is missing: `bwrap` (or `sandbox-exec`) and its version, that a
+  sandbox can be created and an overlay mounted inside one, `unshare` for
+  DNS, the systemd user manager and its delegated controllers for limits,
+  the configuration file and profiles, the state and tmp directories, the
+  binaries the configuration has sections for, and `podman` with an OCI
+  runtime and `ssh` with the configured keys where a profile enables them.
+  Each check ends in `ok`, `warn` or `FAIL` with a fix suggestion for the
+  latter two, including the distribution's install command; the command
+  exits non-zero when any check failed. On a terminal the statuses are
+  marked and colored (`NO_COLOR` turns the colors off).
+
 - Profiles: a `<name>.toml` file in `~/.config/box/profile.d/` (next to
   `box.toml`) applies on top of the configuration when `box` is started in a
   directory under one of its `paths`. The rest of the file holds the same
