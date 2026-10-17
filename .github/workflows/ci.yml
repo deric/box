@@ -98,8 +98,15 @@ jobs:
           bwrap --version
           unshare --version
       - name: Smoke test (bwrap)
+        # The container's root is an overlayfs already, and the kernel will
+        # not stack another one on it from inside the sandbox's user
+        # namespace, so the smoke test runs with the overlays dropped from
+        # the default configuration; everything else stays as shipped.
         run: |
           go build -o box ./cmd/box
+          ./box init
+          sed -i '/^overlays = \[/,/^\]/d' "$HOME/.config/box/box.toml"
+          ./box config sh
           ./box info
           ./box doctor
           ./box show sh
