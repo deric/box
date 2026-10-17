@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"text/tabwriter"
 
 	"github.com/deric/box/internal/config"
 )
@@ -232,24 +231,21 @@ func TestPrintChecks(t *testing.T) {
 	}
 	want := "\u2714 ok    bwrap   bubblewrap 0.11.1 at /usr/bin/bwrap\n" +
 		"\u26a0 warn  limits  no cpu controller\n" +
-		"                delegate it:\n" +
-		"                  Delegate=cpu\n" +
+		"                  delegate it:\n" +
+		"                    Delegate=cpu\n" +
 		"\u2718 FAIL  config  broken\n" +
-		"                fix it\n"
+		"                  fix it\n"
 	if plain.String() != want {
 		t.Errorf("printChecks:\n%s\nwant:\n%s", plain.String(), want)
 	}
 
 	// Colored output aligns the same way: the escape sequences take no
-	// width, and the tabwriter's escape bytes do not leak.
+	// width.
 	var colored bytes.Buffer
 	if err := printChecks(&colored, checks, true); err != nil {
 		t.Fatal(err)
 	}
 	got := colored.String()
-	if strings.Contains(got, string(tabwriter.Escape)) {
-		t.Errorf("tabwriter escape leaked into output: %q", got)
-	}
 	if !strings.Contains(got, "\x1b[32m\u2714 ok\x1b[0m") || !strings.Contains(got, "\x1b[33m\u26a0 warn\x1b[0m") || !strings.Contains(got, "\x1b[31;1m\u2718 FAIL\x1b[0m") {
 		t.Errorf("statuses not colored: %q", got)
 	}
@@ -272,7 +268,7 @@ func TestUseColor(t *testing.T) {
 	}
 	defer func() { _ = devnull.Close() }()
 	t.Setenv("TERM", "xterm")
-	os.Unsetenv("NO_COLOR")
+	_ = os.Unsetenv("NO_COLOR")
 	if useColor(int(devnull.Fd())) {
 		t.Error("colors on for a non-terminal")
 	}

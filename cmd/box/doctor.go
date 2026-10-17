@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"text/tabwriter"
+	"unicode/utf8"
 
 	"github.com/deric/box/internal/config"
 	"github.com/deric/box/internal/sandbox"
@@ -81,16 +81,14 @@ func useColor(fd int) bool {
 	return isTerminal(fd)
 }
 
-// painter wraps text in a color when colors are on. The sequences are
-// bracketed by tabwriter.Escape so the writer does not count their width.
+// painter wraps text in a color when colors are on.
 type painter bool
 
 func (p painter) paint(sgr, text string) string {
 	if !p {
 		return text
 	}
-	const esc = string(tabwriter.Escape)
-	return esc + sgr + esc + text + esc + sgrReset + esc
+	return sgr + text + sgrReset
 }
 
 // check is the result of one check: what was looked at, what was found,
@@ -178,28 +176,39 @@ func plural(n int, noun string) string {
 
 // printChecks renders the checks as aligned rows, an icon and the status
 // in the status's color in front of each; fix lines follow the row they
-// belong to, indented and dimmed.
+// belong to, indented and dimmed. Columns are padded by visible width,
+// which the color sequences do not add to.
 func printChecks(out io.Writer, checks []check, color painter) error {
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', tabwriter.StripEscape)
+	mark := func(s status) string { return s.icon() + " " + s.String() }
+	markWidth, nameWidth := 0, 0
 	for _, ch := range checks {
-		mark := color.paint(ch.status.color(), ch.status.icon()+" "+ch.status.String())
+		markWidth = max(markWidth, utf8.RuneCountInString(mark(ch.status)))
+		nameWidth = max(nameWidth, utf8.RuneCountInString(ch.name))
+	}
+	pad := func(s string, width int) string {
+		return strings.Repeat(" ", width-utf8.RuneCountInString(s))
+	}
+	indent := strings.Repeat(" ", markWidth+2+nameWidth+2+2)
+	for _, ch := range checks {
+		m := mark(ch.status)
 		name := ch.name
 		if ch.status != statusOK {
 			name = color.paint(sgrBold, name)
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", mark, name, ch.detail); err != nil {
+		line := color.paint(ch.status.color(), m) + pad(m, markWidth) + "  " + name + pad(ch.name, nameWidth) + "  " + ch.detail + "\n"
+		if _, err := io.WriteString(out, line); err != nil {
 			return err
 		}
 		if ch.status == statusOK || ch.fix == "" {
 			continue
 		}
-		for _, line := range strings.Split(strings.TrimRight(ch.fix, "\n"), "\n") {
-			if _, err := fmt.Fprintf(w, "\t\t  %s\n", color.paint(sgrDim, line)); err != nil {
+		for _, fix := range strings.Split(strings.TrimRight(ch.fix, "\n"), "\n") {
+			if _, err := io.WriteString(out, indent+color.paint(sgrDim, fix)+"\n"); err != nil {
 				return err
 			}
 		}
 	}
-	return w.Flush()
+	return nil
 }
 
 // checkConfig loads the configuration and reports on the file and the
