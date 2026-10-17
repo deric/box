@@ -97,7 +97,7 @@ dns = true
 log_dir = "/tmp/box"
 allow_hosts = [
   "api.dagger.cloud", "apt.voxpupuli.org",
-  "crates.io", "*.crates.io",
+  "*.centos.org", "crates.io", "*.crates.io",
   "*.debian.org", "dl.google.com",
   "files.pythonhosted.org", "forge.puppet.com", "forgeapi.puppet.com",
   "hex.pm",
@@ -111,9 +111,9 @@ allow_hosts = [
   "storage.googleapis.com",
   # container registries (podman pull / build)
   "registry-1.docker.io", "auth.docker.io", "index.docker.io",
-  "production.cloudflare.docker.com",
+  "pkgs.org", "production.cloudflare.docker.com",
   "quay.io", "*.quay.io", "ghcr.io",
-  "registry.fedoraproject.org", "registry.access.redhat.com",
+  "registry.fedoraproject.org", "registry.access.redhat.com", "repology.org",
   "www.securityfocus.com",
 ]
 
