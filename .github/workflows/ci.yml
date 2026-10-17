@@ -74,6 +74,13 @@ jobs:
       - name: Install dependencies
         run: dnf install -y --setopt=install_weak_deps=False git-core tar gzip gawk diffutils bubblewrap util-linux
       - uses: actions/checkout@v7
+      - name: Let root use the checkout
+        # The workspace belongs to the runner's user while the container runs
+        # as root; without this git refuses the directory and go build cannot
+        # stamp the binary with the VCS state (exit status 128).
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git status --short
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
