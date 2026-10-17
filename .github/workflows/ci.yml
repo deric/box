@@ -72,7 +72,7 @@ jobs:
       options: --privileged
     steps:
       - name: Install dependencies
-        run: dnf install -y --setopt=install_weak_deps=False git-core tar gzip gawk diffutils bubblewrap util-linux
+        run: dnf install -y --setopt=install_weak_deps=False git-core tar gzip gawk diffutils shadow-utils bubblewrap util-linux
       - uses: actions/checkout@v7
       - name: Let root use the checkout
         # The workspace belongs to the runner's user while the container runs
@@ -98,20 +98,30 @@ jobs:
           bwrap --version
           unshare --version
       - name: Smoke test (bwrap)
-        # The container's root is an overlayfs already, and the kernel will
-        # not stack another one on it from inside the sandbox's user
-        # namespace, so the smoke test runs with the overlays dropped from
-        # the default configuration; everything else stays as shipped.
+        # box is meant to run as an ordinary user, and as root it cannot: for
+        # DNS it drops its capabilities inside a user namespace before bwrap
+        # maps the current uid onto itself in a nested one, and mapping uid 0
+        # onto the parent namespace's root needs CAP_SETFCAP there (EPERM).
+        # So the test runs as a user with the checkout owner's uid, which
+        # keeps the working directory writable. The container's root is an
+        # overlayfs already and the kernel will not stack another one on it
+        # from inside the sandbox, so the overlays are dropped from the
+        # default configuration; everything else stays as shipped.
         run: |
           go build -o box ./cmd/box
-          ./box init
+          uid=$(stat -c %u .)
+          if [ "$uid" = 0 ]; then uid=1001; chown -R "$uid" .; fi
+          useradd --uid "$uid" --create-home ci
+          cat > /tmp/smoke.sh <<'EOF'
+          set -e
+          box init
           sed -i '/^overlays = \[/,/^\]/d' "$HOME/.config/box/box.toml"
-          ./box config sh
-          ./box info
-          ./box doctor
-          ./box show sh
+          box config sh
+          box info
+          box doctor
+          box show sh
           touch "$HOME/box-smoke-host"
-          ./box run sh -c '
+          box run sh -c '
             echo "sandboxed as $(id -un)@$(uname -n) in $PWD"
             if [ "$BOX_SANDBOX" != 1 ]; then echo "FAIL: BOX_SANDBOX is not set" >&2; exit 1; fi
             if [ "$(uname -n)" != box ]; then echo "FAIL: hostname is not box" >&2; exit 1; fi
@@ -121,8 +131,10 @@ jobs:
             getent hosts github.com || { echo "FAIL: dns does not resolve" >&2; exit 1; }
             echo ok
           '
-          ./box run sleep 10 &
+          box run sleep 10 &
           sleep 2
-          ./box ps | tee ps.out
+          box ps | tee ps.out
           awk '$2 == "sleep" { found = 1 } END { exit !found }' ps.out
           wait
+          EOF
+          runuser -u ci -- env HOME=/home/ci PATH="$PWD:$PATH" sh /tmp/smoke.sh
