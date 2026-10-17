@@ -53,3 +53,62 @@ jobs:
           ./box ps | tee ps.out
           awk '$2 == "sleep" { found = 1 } END { exit !found }' ps.out
           wait
+
+  # Red Hat family: Fedora and a RHEL 10 clone, in containers on the Ubuntu
+  # runner. Besides tests and build this is where the bwrap sandbox gets its
+  # end-to-end check on Linux, since the images ship a bubblewrap new enough
+  # for overlays (0.10+).
+  test-redhat:
+    name: test (${{ matrix.image }})
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["fedora:latest", "almalinux:10"]
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+      # bwrap creates user namespaces and mounts overlays, which the seccomp
+      # and AppArmor profiles of an ordinary container forbid.
+      options: --privileged
+    steps:
+      - name: Install dependencies
+        run: dnf install -y --setopt=install_weak_deps=False git-core tar gzip gawk diffutils bubblewrap util-linux
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: go build ./...
+      - name: Allow unprivileged user namespaces
+        # Ubuntu's AppArmor restriction on the runner's kernel also binds the
+        # container, and bwrap runs without capabilities once box has set up
+        # the DNS namespaces. /proc/sys is writable in a privileged container.
+        run: |
+          f=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [ -f "$f" ]; then echo 0 > "$f"; fi
+          bwrap --version
+          unshare --version
+      - name: Smoke test (bwrap)
+        run: |
+          go build -o box ./cmd/box
+          ./box info
+          ./box doctor
+          ./box show sh
+          touch "$HOME/box-smoke-host"
+          ./box run sh -c '
+            echo "sandboxed as $(id -un)@$(uname -n) in $PWD"
+            if [ "$BOX_SANDBOX" != 1 ]; then echo "FAIL: BOX_SANDBOX is not set" >&2; exit 1; fi
+            if [ "$(uname -n)" != box ]; then echo "FAIL: hostname is not box" >&2; exit 1; fi
+            if touch /usr/x 2>/dev/null; then echo "FAIL: /usr is writable" >&2; exit 1; fi
+            if [ -e "$HOME/box-smoke-host" ]; then echo "FAIL: host \$HOME is visible" >&2; exit 1; fi
+            touch box-smoke && rm box-smoke
+            getent hosts github.com || { echo "FAIL: dns does not resolve" >&2; exit 1; }
+            echo ok
+          '
+          ./box run sleep 10 &
+          sleep 2
+          ./box ps | tee ps.out
+          awk '$2 == "sleep" { found = 1 } END { exit !found }' ps.out
+          wait
