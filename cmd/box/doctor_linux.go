@@ -144,8 +144,9 @@ func runBwrap(bwrap string, args ...string) error {
 // usernsHint explains why unprivileged user namespaces may be unavailable
 // from what the kernel exposes: the Debian and generic sysctls that turn
 // them off, Ubuntu's AppArmor restriction, which a program needs a profile
-// to get past, and the nesting limit a container or another sandbox may
-// impose, which shows as ENOSPC.
+// to get past (bwrap has one from its package, unshare needs one written,
+// as Ubuntu 26.04 ships none), and the nesting limit a container or
+// another sandbox may impose, which shows as ENOSPC.
 func usernsHint(err error) string {
 	var lines []string
 	if v := sysctl("/proc/sys/user/max_user_namespaces"); v == "0" {
@@ -157,8 +158,16 @@ func usernsHint(err error) string {
 	if v := sysctl("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"); v == "1" {
 		lines = append(lines,
 			"AppArmor restricts unprivileged user namespaces to programs with a profile that allows them (kernel.apparmor_restrict_unprivileged_userns = 1);",
-			"Ubuntu's apparmor and bubblewrap packages ship such profiles (bwrap-userns-restrict, unshare-userns-restrict in /etc/apparmor.d): reinstall them and run `sudo systemctl reload apparmor`,",
-			"or turn the restriction off: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0")
+			"Ubuntu's bubblewrap package ships one for bwrap (/etc/apparmor.d/bwrap-userns-restrict; reinstall it if missing), but no package ships one for unshare, which box needs for dns and pasta: give it one, e.g.",
+			"  sudo tee /etc/apparmor.d/unshare-userns <<'EOF'",
+			"  abi <abi/4.0>,",
+			"  include <tunables/global>",
+			"  profile unshare /usr/bin/unshare flags=(unconfined) {",
+			"    userns,",
+			"  }",
+			"  EOF",
+			"  sudo apparmor_parser -r /etc/apparmor.d/unshare-userns",
+			"or turn the restriction off for every program: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0")
 	}
 	if msg := err.Error(); strings.Contains(msg, "ENOSPC") || strings.Contains(msg, "No space left") {
 		lines = append(lines, "ENOSPC here means the namespace nesting limit was hit: inside a container or another sandbox the parent may have disabled user namespaces")

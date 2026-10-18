@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   namespace, `box info` shows a `pasta` line, and `box show` prints the
   `_netns -pasta` step. The default configuration keeps the proxy.
 
+### Changed
+
+- `box doctor` no longer suggests reinstalling an `unshare-userns-restrict`
+  AppArmor profile when Ubuntu's user namespace restriction keeps `unshare`
+  from creating the DNS namespace: no package ships one (Ubuntu 26.04 has
+  a profile for `bwrap` only). It now prints a drop-in profile for
+  `/usr/bin/unshare` to install instead, with the sysctl as the alternative.
+
 ## [0.5.0] - 2026-10-17
 
 ### Added
