@@ -182,7 +182,7 @@ func TestBuildDNSOff(t *testing.T) {
 
 // closeDNS releases the descriptors a plan with DNS holds open.
 func closeDNS(p *Plan) {
-	if p.DNS != nil {
+	if p.DNS != nil && p.DNS.UDPFD >= 0 {
 		_ = os.NewFile(uintptr(p.DNS.UDPFD), "").Close()
 		_ = os.NewFile(uintptr(p.DNS.TCPFD), "").Close()
 	}

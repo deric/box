@@ -88,9 +88,9 @@ func (t *logTail) add(line string) {
 
 // parseDenied reads a proxy log line of the form
 // "2006/01/02 15:04:05 denied METHOD WHAT", where WHAT is host:port for
-// CONNECT and an absolute URL otherwise, and returns when it happened and
-// the target host. Other lines (failed requests, anything unexpected) are
-// not denials.
+// CONNECT, a name for DNS (the pasta backend's resolver) and an absolute
+// URL otherwise, and returns when it happened and the target host. Other
+// lines (failed requests, anything unexpected) are not denials.
 func parseDenied(line string) (at time.Time, target string, ok bool) {
 	f := strings.Fields(line)
 	if len(f) < 5 || f[2] != "denied" {

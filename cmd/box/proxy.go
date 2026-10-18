@@ -34,6 +34,7 @@ func cmdProxy(argv []string) error {
 	logPath := fs.String("l", "", "log file for denied requests")
 	dns := fs.Bool("d", false, "relay DNS queries to the host's resolver")
 	ssh := fs.Bool("ssh", false, "let CONNECT through to port 22 of allowed hosts")
+	pasta := fs.String("pasta", "", "attach this pasta executable to the sandbox's namespaces on request")
 	var allow stringList
 	fs.Var(&allow, "a", "allowed host (repeatable)")
 	if err := fs.Parse(argv); err != nil {
@@ -89,6 +90,15 @@ func cmdProxy(argv []string) error {
 	if *dns {
 		srv.DNS = &proxy.Resolver{}
 	}
+	if *pasta != "" {
+		srv.Pasta = func(pid int) error {
+			if err := sandbox.RunPasta(*pasta, pid); err != nil {
+				return err
+			}
+			logger.Printf("pasta attached to the namespaces of pid %d", pid)
+			return nil
+		}
+	}
 	return srv.Serve(ln)
 }
 
@@ -111,29 +121,125 @@ func cmdConnect(argv []string) error {
 // cmdNetns runs in the user and network namespaces unshare(1) created for
 // a sandbox with DNS (see sandbox.DNS): it binds the DNS listeners, places
 // them at the given descriptors, drops its capabilities and execs the
-// command, with argv[0] tagged for `box ps` when -n is given. Without a
-// command it only checks that the listeners can be bound.
+// command, with argv[0] tagged for `box ps` when -n is given. With -pasta
+// it sets the pasta backend up instead (see sandbox.Pasta): the listeners
+// stay with the resolver it starts, so -u and -t are not given. Without a
+// command it only checks that the listeners can be bound (and, with
+// -pasta, the firewall loaded; -wait then holds the namespace open until
+// stdin is closed, see sandbox.ProbePasta).
 func cmdNetns(argv []string) error {
 	fs := flag.NewFlagSet("_netns", flag.ExitOnError)
 	udp := fs.Int("u", -1, "descriptor to place the UDP listener at")
 	tcp := fs.Int("t", -1, "descriptor to place the TCP listener at")
 	name := fs.String("n", "", "sandbox name to tag the command with")
+	pasta := fs.Bool("pasta", false, "set the pasta backend up")
+	sock := fs.String("s", "", "proxy unix socket (pasta)")
+	logPath := fs.String("l", "", "proxy log file (pasta)")
+	nft := fs.String("f", "", "nft executable (pasta)")
+	wait := fs.Bool("wait", false, "without a command: hold the namespace open until stdin is closed (pasta)")
+	var allow stringList
+	fs.Var(&allow, "a", "allowed host (pasta, repeatable)")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 	// The capabilities are dropped on this thread, which execs next.
 	runtime.LockOSThread()
-	if err := sandbox.PrepareDNS(*udp, *tcp); err != nil {
-		return fmt.Errorf("_netns: %w", err)
-	}
-	if fs.NArg() == 0 {
+	switch {
+	case *pasta && fs.NArg() == 0:
+		if err := sandbox.ProbePasta(*nft, *wait); err != nil {
+			return fmt.Errorf("_netns: %w", err)
+		}
 		return nil
+	case *pasta:
+		self, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("_netns: %w", err)
+		}
+		warnings, err := sandbox.PreparePasta(sandbox.PastaSetup{Self: self, Socket: *sock, Log: *logPath, NFT: *nft, Allow: allow})
+		for _, w := range warnings {
+			fmt.Fprintln(os.Stderr, "box: warning:", w)
+		}
+		if err != nil {
+			return fmt.Errorf("_netns: %w", err)
+		}
+	default:
+		if err := sandbox.PrepareDNS(*udp, *tcp); err != nil {
+			return fmt.Errorf("_netns: %w", err)
+		}
+		if fs.NArg() == 0 {
+			return nil
+		}
 	}
 	cmdArgv := append([]string{}, fs.Args()...)
 	if *name != "" {
 		cmdArgv[0] = sandbox.ProcTitlePrefix + *name
 	}
 	return syscall.Exec(fs.Arg(0), cmdArgv, os.Environ())
+}
+
+// cmdFilter is the resolver of a pasta sandbox (see sandbox.Pasta), started
+// by `box _netns -pasta` in the sandbox's namespaces with the DNS listeners
+// at the given descriptors: it answers queries for allowed names through
+// the proxy and admits their addresses into the firewall with nft, keeping
+// CAP_NET_ADMIN for that and nothing else. Denied names go to the log file.
+// It exits with the sandbox, whose runner is its parent.
+func cmdFilter(argv []string) error {
+	fs := flag.NewFlagSet("_filter", flag.ExitOnError)
+	udpFD := fs.Int("u", -1, "inherited UDP DNS listener")
+	tcpFD := fs.Int("t", -1, "inherited TCP DNS listener")
+	sock := fs.String("s", "", "proxy unix socket")
+	logPath := fs.String("l", "", "log file for denied names")
+	nft := fs.String("f", "nft", "nft executable")
+	var allow stringList
+	fs.Var(&allow, "a", "allowed host (repeatable)")
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if *sock == "" || *udpFD < 0 || *tcpFD < 0 {
+		return fmt.Errorf("_filter: -s, -u and -t are required")
+	}
+	if err := sandbox.KeepNetAdmin(); err != nil {
+		return fmt.Errorf("_filter: %w", err)
+	}
+	logger := log.New(os.Stderr, "", log.LstdFlags)
+	if *logPath != "" {
+		f, err := os.OpenFile(*logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		logger.SetOutput(f)
+	}
+	pc, err := net.FilePacketConn(os.NewFile(uintptr(*udpFD), "dns-udp"))
+	if err != nil {
+		return fmt.Errorf("_filter: %w", err)
+	}
+	tl, err := net.FileListener(os.NewFile(uintptr(*tcpFD), "dns-tcp"))
+	if err != nil {
+		return fmt.Errorf("_filter: %w", err)
+	}
+	filter := &proxy.DNSFilter{
+		Allow: proxy.Allowlist(allow),
+		Relay: &proxy.DNSForwarder{Socket: *sock},
+		Admit: (&sandbox.NFT{Exe: *nft}).Admit,
+		Log:   logger,
+	}
+	go func() { _ = filter.ServeUDP(pc) }()
+	go func() { _ = filter.ServeTCP(tl) }()
+	// The parent-death signal normally ends this process; polling the
+	// parent PID is the fallback.
+	parent := os.Getppid()
+	go func() {
+		for range time.Tick(time.Second) {
+			if os.Getppid() != parent {
+				os.Exit(0)
+			}
+		}
+	}()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	<-sigs
+	return nil
 }
 
 // cmdForward runs inside the sandbox as the parent of the command, passing

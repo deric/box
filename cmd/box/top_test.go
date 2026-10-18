@@ -334,6 +334,7 @@ func TestParseDenied(t *testing.T) {
 		{"2026/10/07 11:59:00 denied POST https://api.example/x", "api.example", true},
 		{"2026/10/07 11:59:00 denied CONNECT [::1]:443", "::1", true},
 		{"2026/10/07 11:59:00 denied CONNECT noport", "noport", true},
+		{"2026/10/07 11:59:00 denied DNS telemetry.example", "telemetry.example", true},
 		{"2026/10/07 11:59:00 CONNECT github.com:443: dial tcp: timeout", "", false},
 		{"2026/10/07 11:59:00 GET http://x/: EOF", "", false},
 		{"garbage", "", false},

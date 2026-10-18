@@ -25,3 +25,27 @@ func DNSStatus() (unshare, version string, err error) {
 
 // DNSInfo describes how DNS is provided to sandboxes on this host.
 func DNSInfo() string { return "not supported on this platform" }
+
+// PastaSetup is what `box _netns -pasta` needs on Linux.
+type PastaSetup struct {
+	Self, Socket, Log, NFT string
+	Allow                  []string
+}
+
+// PreparePasta, ProbePasta, KeepNetAdmin and RunPasta are only used on
+// Linux.
+func PreparePasta(PastaSetup) ([]string, error) {
+	return nil, errors.New("not supported on this platform")
+}
+func ProbePasta(string, bool) error { return errors.New("not supported on this platform") }
+func KeepNetAdmin() error           { return errors.New("not supported on this platform") }
+func RunPasta(string, int) error    { return errors.New("not supported on this platform") }
+
+// PastaStatus checks that the pasta backend can be provided; it cannot on
+// this platform.
+func PastaStatus() (pasta, nft, version string, err error) {
+	return "", "", "", errors.New("not supported on this platform")
+}
+
+// PastaInfo describes how the pasta backend stands on this host.
+func PastaInfo() string { return "not supported on this platform" }

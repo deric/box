@@ -112,6 +112,7 @@ type Section struct {
 	UnsetEnv      []string          `toml:"unset_env"`
 	BindBinary    *bool             `toml:"bind_binary"`
 	Podman        *bool             `toml:"podman"`
+	Pasta         *bool             `toml:"pasta"`
 	SSH           *bool             `toml:"ssh"`
 	SSHKey        *string           `toml:"ssh_key"`
 	SSHUser       *string           `toml:"ssh_user"`
@@ -191,6 +192,14 @@ type Profile struct {
 	// storage.conf suited to a single-UID user namespace (see package
 	// sandbox). It implies DisableUserns = false.
 	Podman bool `toml:"podman"`
+	// Pasta gives a sandbox behind the proxy a network interface of its
+	// own through pasta(1) instead of the HTTP proxy: box's resolver inside
+	// answers only names on AllowHosts and admits their addresses through
+	// an nftables filter in the sandbox's network namespace, so any
+	// protocol reaches the allowed hosts and nothing else is reachable (see
+	// package sandbox). It has no effect with Network set or Proxy unset,
+	// and implies DNS.
+	Pasta bool `toml:"pasta"`
 	// SSH lets the sandbox open SSH connections to AllowHosts: the proxy
 	// tunnels CONNECT requests to port 22, which it refuses otherwise, and
 	// an ssh_config generated inside routes every connection through it
@@ -592,6 +601,7 @@ func merge(base, over Section) Section {
 		UnsetEnv:      mergeList(base.UnsetEnv, over.UnsetEnv, nil),
 		BindBinary:    pick(base.BindBinary, over.BindBinary),
 		Podman:        pick(base.Podman, over.Podman),
+		Pasta:         pick(base.Pasta, over.Pasta),
 		SSH:           pick(base.SSH, over.SSH),
 		SSHKey:        pick(base.SSHKey, over.SSHKey),
 		SSHUser:       pick(base.SSHUser, over.SSHUser),
@@ -637,6 +647,7 @@ func finalize(s Section) Profile {
 		UnsetEnv:      s.UnsetEnv,
 		BindBinary:    orElse(s.BindBinary, true),
 		Podman:        orElse(s.Podman, false),
+		Pasta:         orElse(s.Pasta, false),
 		SSH:           orElse(s.SSH, false),
 		SSHKey:        orElse(s.SSHKey, ""),
 		SSHUser:       orElse(s.SSHUser, ""),

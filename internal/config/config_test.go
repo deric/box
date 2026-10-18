@@ -733,3 +733,32 @@ func TestResolveRWParentDefault(t *testing.T) {
 		t.Error("rw_parent should be a scalar that binary sections override")
 	}
 }
+
+func TestResolvePasta(t *testing.T) {
+	c, err := Parse(`
+[default]
+pasta = true
+
+[binaries.claude]
+pasta = false
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := c.Resolve("tool"); !p.Pasta {
+		t.Errorf("pasta = true in [default]: %+v", p)
+	}
+	if p := c.Resolve("claude"); p.Pasta {
+		t.Errorf("pasta = false in the binary's section must win: %+v", p)
+	}
+	if p := (&Config{}).Resolve("other"); p.Pasta {
+		t.Errorf("unset pasta must default to false: %+v", p)
+	}
+	d, err := Parse(DefaultTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := d.Resolve("tool"); p.Pasta {
+		t.Errorf("the default configuration must use the proxy: %+v", p)
+	}
+}

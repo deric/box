@@ -109,6 +109,7 @@ type features struct {
 	cpu      bool
 	memory   bool
 	podman   bool
+	pasta    bool
 	ssh      bool
 	// sshKeys maps the ssh_key paths in use to the sections naming them.
 	sshKeys map[string][]string
@@ -272,6 +273,9 @@ func featureUsage(cfg *config.Config) features {
 		}
 		if p.Podman {
 			u.podman = true
+		}
+		if p.Pasta && p.Proxy && !p.Network {
+			u.pasta = true
 		}
 		if p.SSH {
 			u.ssh = true
@@ -484,6 +488,8 @@ var packages = map[string]map[string]string{
 	"unshare": {"apt": "util-linux", "dnf": "util-linux", "pacman": "util-linux", "apk": "util-linux-misc", "zypper": "util-linux"},
 	"podman":  {"apt": "podman", "dnf": "podman", "pacman": "podman", "apk": "podman", "zypper": "podman", "brew": "podman"},
 	"crun":    {"apt": "crun", "dnf": "crun", "pacman": "crun", "apk": "crun", "zypper": "crun"},
+	"pasta":   {"apt": "passt", "dnf": "passt", "pacman": "passt", "apk": "passt", "zypper": "passt"},
+	"nft":     {"apt": "nftables", "dnf": "nftables", "pacman": "nftables", "apk": "nftables", "zypper": "nftables"},
 	"ssh":     {"apt": "openssh-client", "dnf": "openssh-clients", "pacman": "openssh", "apk": "openssh-client", "zypper": "openssh-clients"},
 	"diff":    {"apt": "diffutils", "dnf": "diffutils", "pacman": "diffutils", "apk": "diffutils", "zypper": "diffutils", "brew": "diffutils"},
 }

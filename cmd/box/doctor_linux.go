@@ -19,9 +19,9 @@ const probeTimeout = 10 * time.Second
 
 // platformChecks covers bubblewrap and the kernel and systemd features a
 // Linux sandbox relies on: user namespaces, unprivileged overlayfs for
-// overlays, unshare(1) for DNS and the systemd user manager for resource
-// limits. Probes that would fail for a reason already reported are
-// skipped.
+// overlays, unshare(1) for DNS, pasta(1) and nft(8) for the pasta backend
+// and the systemd user manager for resource limits. Probes that would fail
+// for a reason already reported are skipped.
 func platformChecks(u features) []check {
 	var checks []check
 	r := sandbox.LookupRunner()
@@ -44,6 +44,9 @@ func platformChecks(u features) []check {
 		}
 		if u.dns {
 			checks = append(checks, checkDNS())
+		}
+		if u.pasta {
+			checks = append(checks, checkPasta())
 		}
 		if u.cpu || u.memory {
 			checks = append(checks, checkLimits(u))
@@ -141,8 +144,9 @@ func runBwrap(bwrap string, args ...string) error {
 // usernsHint explains why unprivileged user namespaces may be unavailable
 // from what the kernel exposes: the Debian and generic sysctls that turn
 // them off, Ubuntu's AppArmor restriction, which a program needs a profile
-// to get past, and the nesting limit a container or another sandbox may
-// impose, which shows as ENOSPC.
+// to get past (bwrap has one from its package, unshare needs one written,
+// as Ubuntu 26.04 ships none), and the nesting limit a container or
+// another sandbox may impose, which shows as ENOSPC.
 func usernsHint(err error) string {
 	var lines []string
 	if v := sysctl("/proc/sys/user/max_user_namespaces"); v == "0" {
@@ -154,8 +158,16 @@ func usernsHint(err error) string {
 	if v := sysctl("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"); v == "1" {
 		lines = append(lines,
 			"AppArmor restricts unprivileged user namespaces to programs with a profile that allows them (kernel.apparmor_restrict_unprivileged_userns = 1);",
-			"Ubuntu's apparmor and bubblewrap packages ship such profiles (bwrap-userns-restrict, unshare-userns-restrict in /etc/apparmor.d): reinstall them and run `sudo systemctl reload apparmor`,",
-			"or turn the restriction off: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0")
+			"Ubuntu's bubblewrap package ships one for bwrap (/etc/apparmor.d/bwrap-userns-restrict; reinstall it if missing), but no package ships one for unshare, which box needs for dns and pasta: give it one, e.g.",
+			"  sudo tee /etc/apparmor.d/unshare-userns <<'EOF'",
+			"  abi <abi/4.0>,",
+			"  include <tunables/global>",
+			"  profile unshare /usr/bin/unshare flags=(unconfined) {",
+			"    userns,",
+			"  }",
+			"  EOF",
+			"  sudo apparmor_parser -r /etc/apparmor.d/unshare-userns",
+			"or turn the restriction off for every program: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0")
 	}
 	if msg := err.Error(); strings.Contains(msg, "ENOSPC") || strings.Contains(msg, "No space left") {
 		lines = append(lines, "ENOSPC here means the namespace nesting limit was hit: inside a container or another sandbox the parent may have disabled user namespaces")
@@ -204,6 +216,42 @@ func checkDNS() check {
 		detail += " (util-linux " + version + ")"
 	}
 	return check{"dns", statusOK, detail, ""}
+}
+
+// checkPasta makes sure pasta and nft are there and that a sandbox's
+// namespace can be prepared for them: the firewall loaded and pasta
+// attached (see sandbox.PastaStatus).
+func checkPasta() check {
+	pasta, nft, version, err := sandbox.PastaStatus()
+	detail := pasta
+	if version != "" {
+		detail += " (" + version + ")"
+	}
+	if nft != "" {
+		detail += ", nft at " + nft
+	}
+	fallback := "\nuntil then those sandboxes fall back to the proxy; or set pasta = false"
+	switch {
+	case errors.Is(err, sandbox.ErrNoPasta):
+		return check{"pasta", statusWarn, "pasta not found in PATH; pasta = true is set",
+			installHint("pasta") + "\npasta comes with passt: https://passt.top" + fallback}
+	case errors.Is(err, sandbox.ErrNoNFT):
+		return check{"pasta", statusWarn, "nft not found in PATH; pasta = true is set (" + detail + ")",
+			installHint("nft") + "\nbox loads the firewall of a pasta sandbox with nft" + fallback}
+	case errors.Is(err, sandbox.ErrNoUnshare):
+		return check{"pasta", statusWarn, "unshare not found in PATH; pasta needs the network namespace it creates (" + detail + ")",
+			installHint("unshare") + fallback}
+	case err != nil:
+		msg := err.Error()
+		fix := usernsHint(err)
+		if strings.Contains(msg, "nft") {
+			fix = "the firewall needs the nf_tables, nft_ct, nf_conntrack and nft_reject_inet modules, which an unprivileged namespace cannot load: `sudo modprobe nf_tables nft_ct nf_conntrack nft_reject_inet` (and list them in /etc/modules-load.d)"
+		} else if strings.Contains(msg, "/dev/net/tun") || strings.Contains(msg, "tap") {
+			fix = "pasta needs /dev/net/tun: `sudo modprobe tun`"
+		}
+		return check{"pasta", statusWarn, "a sandbox cannot be prepared for pasta: " + msg + " (" + detail + ")", fix + fallback}
+	}
+	return check{"pasta", statusOK, detail, ""}
 }
 
 // checkLimits makes sure the systemd user manager is reachable and has the

@@ -67,8 +67,11 @@ type Proxy struct {
 // resolver, and a resolv.conf pointing at DNSAddr is bound over the
 // sandbox's /etc/resolv.conf (see Plan.Data).
 type DNS struct {
-	Unshare      string // unshare(1) on the host
-	UDPFD, TCPFD int    // descriptors the listeners are placed at
+	Unshare string // unshare(1) on the host
+	// UDPFD and TCPFD are the descriptors the listeners are placed at;
+	// negative with Pasta, where `box _netns` keeps them for the resolver
+	// it starts in the namespace.
+	UDPFD, TCPFD int
 }
 
 // ProxyFiles returns the socket and log paths for sandbox name/id: the
@@ -233,6 +236,10 @@ type Plan struct {
 	// DNS, when set, has Exec create the network namespace itself and
 	// bind the DNS listeners into it before the runner (see DNS).
 	DNS *DNS
+	// Pasta, when set, gives the sandbox its network through pasta(1)
+	// instead of the proxy (see Pasta); DNS is set along with it, with
+	// the listeners served inside the namespace rather than passed on.
+	Pasta *Pasta
 	// Sync lists copies (sync_files) written back to their host originals
 	// by the forwarder when the command exits.
 	Sync []SyncFile
@@ -259,7 +266,13 @@ type Plan struct {
 // inside the sandbox: to reach the proxy, to write sync_files back, or to
 // keep podman's pause process.
 func (p *Plan) needsForwarder() bool {
-	return p.Proxy != nil || len(p.Sync) > 0 || p.Pause != ""
+	return p.proxyInside() || len(p.Sync) > 0 || p.Pause != ""
+}
+
+// proxyInside reports whether the proxy is reachable from inside the
+// sandbox: with pasta it only serves the resolver, from the host.
+func (p *Plan) proxyInside() bool {
+	return p.Proxy != nil && p.Pasta == nil
 }
 
 // Command returns the invocation as a shell-quoted string. Limits are
@@ -315,8 +328,18 @@ func unshareArgs(uid, gid int) []string {
 // prepares DNS and then execs the runner: the unshare options, then the
 // _netns command line up to and including its "--" (see DNS).
 func (p *Plan) netnsArgs() []string {
-	args := unshareArgs(os.Getuid(), os.Getgid())
-	return append(args, p.Self, "_netns", "-u", strconv.Itoa(p.DNS.UDPFD), "-t", strconv.Itoa(p.DNS.TCPFD), "-n", p.Name, "--")
+	args := append(unshareArgs(os.Getuid(), os.Getgid()), p.Self, "_netns")
+	if p.DNS.UDPFD >= 0 {
+		args = append(args, "-u", strconv.Itoa(p.DNS.UDPFD), "-t", strconv.Itoa(p.DNS.TCPFD))
+	}
+	args = append(args, "-n", p.Name)
+	if p.Pasta != nil {
+		args = append(args, "-pasta", "-s", p.Proxy.Socket, "-l", p.Proxy.Log, "-f", p.Pasta.NFT)
+		for _, h := range p.Proxy.Allow {
+			args = append(args, "-a", h)
+		}
+	}
+	return append(args, "--")
 }
 
 func sortedInts[V any](m map[int]V) []int {
@@ -361,6 +384,11 @@ func (p *Plan) proxyArgs() []string {
 	args := []string{"_proxy", "-s", p.Proxy.Socket, "-l", p.Proxy.Log}
 	if p.DNS != nil {
 		args = append(args, "-d")
+	}
+	if p.Pasta != nil {
+		// Nothing inside reaches the proxy: it relays the resolver's
+		// queries and starts pasta, and lets no request through itself.
+		return append(args, "-pasta", p.Pasta.Exe)
 	}
 	if p.Proxy.SSH {
 		args = append(args, "-ssh")
@@ -688,20 +716,37 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			sock, logFile := ProxyFiles(opts.TmpRoot, logDir(prof, *opts), plan.Name, opts.ID, opts.Cwd)
 			plan.Proxy = &Proxy{Socket: sock, Log: logFile, Allow: prof.AllowHosts}
 			plan.Self = opts.Self
-			// The socket is created by Exec, so it cannot be checked here.
-			add(&mount{kind: kindRW, src: sock, dest: ProxySocket, visible: true})
-			if prof.DNS {
-				if m := collectDNS(opts, plan); m != nil {
+			if prof.Pasta {
+				if !prof.DNS {
+					plan.Warnings = append(plan.Warnings, "dns = false ignored: with pasta, box's resolver is what enforces allow_hosts")
+				}
+				if m, ok := collectPasta(opts, plan); ok && m != nil {
 					add(m)
+				}
+			}
+			if plan.Pasta == nil {
+				// The socket is created by Exec, so it cannot be checked here.
+				add(&mount{kind: kindRW, src: sock, dest: ProxySocket, visible: true})
+				if prof.DNS {
+					if m := collectDNS(opts, plan); m != nil {
+						add(m)
+					}
 				}
 			}
 		}
 	}
-	if prof.SSH {
+	if prof.SSH || plan.Pasta != nil {
 		if resolveLinks {
 			plan.Warnings = append(plan.Warnings, "ssh is not supported on this platform; ignored")
 		} else {
-			ms, err := sshMounts(prof, opts, plan)
+			// With pasta ssh reaches allow_hosts anyway, so the host's
+			// ssh_config gets its Include fix regardless of the ssh
+			// setting; the key and user still need ssh = true.
+			sshProf := prof
+			if !prof.SSH {
+				sshProf.SSHKey, sshProf.SSHUser = "", ""
+			}
+			ms, err := sshMounts(sshProf, opts, plan)
 			if err != nil {
 				return nil, err
 			}
@@ -943,13 +988,8 @@ var resolvConf = "/etc/resolv.conf"
 // the sandbox's resolv.conf. When the namespaces cannot be prepared the
 // sandbox runs without DNS, with a warning.
 func collectDNS(opts *Options, plan *Plan) *mount {
-	unshare, err := lookupUnshare()
-	if err != nil {
-		plan.Warnings = append(plan.Warnings, "dns disabled: unshare not found; install util-linux")
-		return nil
-	}
-	if err := probeNetns(unshare, opts.Self); err != nil {
-		plan.Warnings = append(plan.Warnings, "dns disabled: cannot prepare its network namespace: "+err.Error())
+	unshare, ok := prepareNetns(opts, plan, "dns disabled: ")
+	if !ok {
 		return nil
 	}
 	// The listeners replace these placeholders, which keep their
@@ -966,15 +1006,31 @@ func collectDNS(opts *Options, plan *Plan) *mount {
 	}
 	plan.DNS = &DNS{Unshare: unshare, UDPFD: fds[0], TCPFD: fds[1]}
 	plan.Self = opts.Self
-	return resolvConfMount(plan)
+	return resolvConfMount(plan, "# Written by box: queries go through its proxy to the host's resolver.")
+}
+
+// prepareNetns finds unshare(1) and probes that it can create the user and
+// network namespaces box needs; when it cannot, a warning starting with
+// prefix says why and false is returned.
+func prepareNetns(opts *Options, plan *Plan, prefix string) (unshare string, ok bool) {
+	unshare, err := lookupUnshare()
+	if err != nil {
+		plan.Warnings = append(plan.Warnings, prefix+ErrNoUnshare.Error())
+		return "", false
+	}
+	if err := probeNetns(unshare, opts.Self); err != nil {
+		plan.Warnings = append(plan.Warnings, prefix+"cannot prepare its network namespace: "+err.Error())
+		return "", false
+	}
+	return unshare, true
 }
 
 // resolvConfMount makes the sandbox's resolv.conf: the host's search
 // domains and options with DNSAddr as the only nameserver, bound read-only
 // over /etc/resolv.conf, at the file the host's symlink resolves to since
-// /etc is bound from the host. Without a host file there is nothing to
-// cover: the libc default is DNSAddr already.
-func resolvConfMount(plan *Plan) *mount {
+// /etc is bound from the host, headed by comment. Without a host file
+// there is nothing to cover: the libc default is DNSAddr already.
+func resolvConfMount(plan *Plan, comment string) *mount {
 	data, err := os.ReadFile(resolvConf)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -984,7 +1040,7 @@ func resolvConfMount(plan *Plan) *mount {
 	}
 	_, rest := proxy.ParseResolvConf(data)
 	var b strings.Builder
-	b.WriteString("# Written by box: queries go through its proxy to the host's resolver.\n")
+	b.WriteString(comment + "\n")
 	host, _, _ := net.SplitHostPort(DNSAddr)
 	b.WriteString("nameserver " + host + "\n")
 	for _, line := range rest {
