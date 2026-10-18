@@ -27,7 +27,10 @@ import (
 // ssh_user as User, and a copy of the host's ~/.ssh/known_hosts is placed
 // inside so known hosts are trusted and new ones can be added without
 // touching the host's file. With network = true or pasta = true ssh
-// connects directly and only the key, user and known hosts are set up.
+// connects directly and only the key, user and known hosts are set up;
+// with pasta the generated configuration (without key or user) and the
+// known hosts are set up even with ssh = false, as the host's Include
+// lines would otherwise keep ssh from running at all inside.
 
 // sshConfig is the host's system-wide client configuration, which the
 // generated one is bound over; tests replace it.

@@ -145,7 +145,9 @@ nested user namespace, which has no say over the firewall. The proxy
 still runs on the host, but its socket is not bound into the sandbox and
 no proxy variables are set. Since the firewall works by address, every
 port of an allowed host is reachable: `ssh = false` does not keep ssh
-out, and `ssh = true` only sets the key, user and known hosts up, as with
+out, so the generated ssh_config (which comments the host's `Include`
+lines out, see [SSH](#ssh)) and the known hosts copy are set up either
+way, and `ssh = true` only adds the key and user, as with
 `network = true`. The backend needs `pasta`, `nft`, `unshare` and a
 kernel with nftables and conntrack available to an unprivileged namespace
 (the `nf_tables`, `nft_ct`, `nf_conntrack` and `nft_reject_inet` modules

@@ -177,7 +177,9 @@ func TestDNSFilterLocalAddresses(t *testing.T) {
 		[3]any{uint16(1), []byte{169, 254, 169, 254}, uint32(60)},
 		[3]any{uint16(1), []byte{192, 0, 2, 7}, uint32(60)},
 	)
-	f.admitAll("a.example.org", false, resp)
+	if err := f.admitAll("a.example.org", false, resp); err != nil {
+		t.Fatal(err)
+	}
 	if len(admitted) != 1 || admitted[0] != "192.0.2.7" {
 		t.Errorf("wildcard match admitted %v", admitted)
 	}
@@ -185,7 +187,9 @@ func TestDNSFilterLocalAddresses(t *testing.T) {
 		t.Errorf("log = %q", logs.String())
 	}
 	admitted = nil
-	f.admitAll("local.example.net", true, resp)
+	if err := f.admitAll("local.example.net", true, resp); err != nil {
+		t.Fatal(err)
+	}
 	if len(admitted) != 3 {
 		t.Errorf("exact match admitted %v", admitted)
 	}

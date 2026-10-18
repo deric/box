@@ -735,11 +735,18 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			}
 		}
 	}
-	if prof.SSH {
+	if prof.SSH || plan.Pasta != nil {
 		if resolveLinks {
 			plan.Warnings = append(plan.Warnings, "ssh is not supported on this platform; ignored")
 		} else {
-			ms, err := sshMounts(prof, opts, plan)
+			// With pasta ssh reaches allow_hosts anyway, so the host's
+			// ssh_config gets its Include fix regardless of the ssh
+			// setting; the key and user still need ssh = true.
+			sshProf := prof
+			if !prof.SSH {
+				sshProf.SSHKey, sshProf.SSHUser = "", ""
+			}
+			ms, err := sshMounts(sshProf, opts, plan)
 			if err != nil {
 				return nil, err
 			}

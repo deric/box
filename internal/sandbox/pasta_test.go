@@ -29,6 +29,7 @@ func pastaFixture(t *testing.T) (opts Options, resolv string) {
 	t.Cleanup(stub(&lookupPasta, func() (string, error) { return "/usr/bin/pasta", nil }))
 	t.Cleanup(stub(&lookupNFT, func() (string, error) { return "/usr/sbin/nft", nil }))
 	t.Cleanup(stub(&probeNetns, func(string, string) error { return nil }))
+	t.Cleanup(stub(&sshConfig, filepath.Join(t.TempDir(), "missing-ssh_config")))
 	return Options{
 		Binary: "tool", Cwd: cwd, Home: home, TmpRoot: filepath.Join(filepath.Dir(home), "tmp", "box"), ID: "7", Self: self,
 		Lookup: func(string) (string, error) { return filepath.Join(bin, "tool"), nil },
@@ -69,18 +70,27 @@ func TestBuildPasta(t *testing.T) {
 	if !strings.HasSuffix(cmd, " -- tool ") {
 		t.Errorf("the command is not run directly:\n%s", cmd)
 	}
-	// The resolver's resolv.conf is bound over the host's.
-	if len(plan.Data) != 1 {
+	// The resolver's resolv.conf is bound over the host's (next to the
+	// ssh_config pasta sandboxes always get, see TestBuildPastaSSHOff).
+	if len(plan.Data) != 2 {
 		t.Fatalf("Data = %v", plan.Data)
 	}
+	want := "# Written by box: its resolver answers for allow_hosts and admits their addresses.\nnameserver 127.0.0.1\nsearch lan\n"
+	found := false
 	for fd, content := range plan.Data {
-		want := "# Written by box: its resolver answers for allow_hosts and admits their addresses.\nnameserver 127.0.0.1\nsearch lan\n"
+		if !strings.Contains(content, "nameserver") {
+			continue
+		}
+		found = true
 		if content != want {
 			t.Errorf("resolv.conf = %q, want %q", content, want)
 		}
 		if !strings.Contains(cmd, fmt.Sprintf(" --ro-bind-data %d %s ", fd, realPath(resolv))) {
 			t.Errorf("resolv.conf not bound in\n%s", cmd)
 		}
+	}
+	if !found {
+		t.Errorf("no resolv.conf in Data = %v", plan.Data)
 	}
 	// The proxy only serves the resolver and starts pasta; it lets no
 	// request of its own through (no -a), and ssh is not routed through it.
@@ -122,6 +132,40 @@ func TestBuildPastaSSH(t *testing.T) {
 	}
 	if plan.Proxy.SSH || strings.Contains(plan.ProxyCommand(), "-ssh") {
 		t.Errorf("proxy told about ssh: %s", plan.ProxyCommand())
+	}
+}
+
+func TestBuildPastaSSHOff(t *testing.T) {
+	opts, _ := pastaFixture(t)
+	hostConf := filepath.Join(t.TempDir(), "ssh_config")
+	if err := os.WriteFile(hostConf, []byte("Include /etc/ssh/ssh_config.d/*.conf\nHost *\n\tAddKeysToAgent yes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer stub(&sshConfig, hostConf)()
+	// ssh = false: the host's ssh_config still gets its Include lines
+	// commented out, as ssh reaches allow_hosts through pasta anyway,
+	// but no key or user is set.
+	prof := config.Profile{Proxy: true, DNS: true, Pasta: true, SSHKey: "~/.ssh/id_ed25519", SSHUser: "git", AllowHosts: []string{"github.com"}}
+	plan, err := buildBwrap(prof, opts, "bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDNS(plan)
+	var conf string
+	for _, content := range plan.Data {
+		if strings.Contains(content, "Host *") {
+			conf = content
+		}
+	}
+	if conf == "" || !strings.Contains(conf, "# skipped by box") || strings.Contains(conf, "\nInclude") ||
+		strings.Contains(conf, "User") || strings.Contains(conf, "IdentityFile") || strings.Contains(conf, "ProxyCommand") {
+		t.Errorf("ssh_config = %q", conf)
+	}
+	if !strings.Contains(strings.Join(plan.Args, " "), " "+realPath(hostConf)+" ") {
+		t.Errorf("ssh_config not bound over %s:\n%s", hostConf, strings.Join(plan.Args, " "))
+	}
+	if len(plan.Warnings) != 0 {
+		t.Errorf("Warnings = %v", plan.Warnings)
 	}
 }
 

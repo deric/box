@@ -103,7 +103,8 @@ sync_files = []
 # reachable and no port inside is exposed. Needs pasta, nft and unshare;
 # without them the sandbox falls back to the proxy with a warning. Note
 # that ssh = false does not keep ssh out with pasta: every port of an
-# allowed host is reachable. See the README for the details.
+# allowed host is reachable, and box's ssh_config is bound either way
+# (ssh = true only adds ssh_key and ssh_user). See the README.
 network = false
 proxy = true
 dns = true

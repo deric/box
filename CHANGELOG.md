@@ -19,8 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CAP_NET_ADMIN`) answers only names on `allow_hosts` and admits what they
   resolve to for their time to live. Other names get `NXDOMAIN` and a
   `denied DNS <name>` log line that `box top` counts. pasta forwards no
-  ports and does not map the host's loopback. Needs `pasta`, `nft` and
-  `unshare`; without them the sandbox falls back to the proxy with a
+  ports and does not map the host's loopback, and ssh connects directly:
+  the generated ssh_config and known hosts are set up even with
+  `ssh = false`, `ssh = true` adds the key and user. Needs `pasta`, `nft`
+  and `unshare`; without them the sandbox falls back to the proxy with a
   warning. `box doctor` checks the pieces and attaches pasta to a throwaway
   namespace, `box info` shows a `pasta` line, and `box show` prints the
   `_netns -pasta` step. The default configuration keeps the proxy.
