@@ -16,6 +16,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/deric/box/internal/diff"
 )
 
 // Built-in configurations for each supported platform.
@@ -504,7 +506,8 @@ func EnsureProfileDir(configPath string) (created bool, err error) {
 
 // DiffDefault writes a unified diff between the file at path and the
 // built-in DefaultTOML to w and reports whether the two differ. It shells out
-// to colordiff(1) when available, falling back to diff(1). Nothing is written
+// to colordiff(1) when available, falling back to diff(1) (diff.Tool).
+// Nothing is written
 // when the file matches the defaults.
 func DiffDefault(path string, w io.Writer) (bool, error) {
 	current, err := os.ReadFile(path)
@@ -514,11 +517,11 @@ func DiffDefault(path string, w io.Writer) (bool, error) {
 	if string(current) == DefaultTOML {
 		return false, nil
 	}
-	diff, err := lookupDiffTool()
+	tool, err := diff.Tool()
 	if err != nil {
 		return false, err
 	}
-	cmd := exec.Command(diff, "-u", "-L", path, "-L", "box defaults", path, "-")
+	cmd := exec.Command(tool, "-u", "-L", path, "-L", "box defaults", path, "-")
 	cmd.Stdin = strings.NewReader(DefaultTOML)
 	cmd.Stdout = w
 	var stderr bytes.Buffer
@@ -531,18 +534,6 @@ func DiffDefault(path string, w io.Writer) (bool, error) {
 		}
 	}
 	return true, nil
-}
-
-// lookupDiffTool returns the path to colordiff if installed, otherwise diff.
-func lookupDiffTool() (string, error) {
-	if p, err := exec.LookPath("colordiff"); err == nil {
-		return p, nil
-	}
-	p, err := exec.LookPath("diff")
-	if err != nil {
-		return "", fmt.Errorf("diff tool not found: %w", err)
-	}
-	return p, nil
 }
 
 // Resolve merges the default section, the section for name (the binary's

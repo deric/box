@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -296,45 +295,6 @@ func TestDiffDefault(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("diff missing %q:\n%s", want, out.String())
 		}
-	}
-}
-
-func TestLookupDiffToolPrefersColordiff(t *testing.T) {
-	diff, err := exec.LookPath("diff")
-	if err != nil {
-		t.Skip("diff not installed")
-	}
-	bin := t.TempDir()
-	if err := os.Symlink(diff, filepath.Join(bin, "diff")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin)
-
-	// Only diff on PATH: fall back silently.
-	got, err := lookupDiffTool()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != filepath.Join(bin, "diff") {
-		t.Fatalf("expected fallback to diff, got %s", got)
-	}
-
-	// colordiff present: prefer it.
-	if err := os.Symlink(diff, filepath.Join(bin, "colordiff")); err != nil {
-		t.Fatal(err)
-	}
-	got, err = lookupDiffTool()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != filepath.Join(bin, "colordiff") {
-		t.Fatalf("expected colordiff, got %s", got)
-	}
-
-	// Neither present: error.
-	t.Setenv("PATH", t.TempDir())
-	if _, err := lookupDiffTool(); err == nil {
-		t.Fatal("expected error when no diff tool is available")
 	}
 }
 

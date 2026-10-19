@@ -139,7 +139,7 @@ func cmdDoctor(argv []string) error {
 	if u.ssh {
 		checks = append(checks, checkSSH(u)...)
 	}
-	checks = append(checks, checkTool("diff", "diff", "box init cannot show the differences to the defaults without it", statusWarn))
+	checks = append(checks, checkTool("diff", "diff", "box init cannot show the differences to the defaults without it; sync_files conflicts fall back to a built-in diff", statusWarn))
 
 	color := painter(useColor(int(os.Stdout.Fd())))
 	if err := printChecks(os.Stdout, checks, color); err != nil {

@@ -29,6 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A `sync_files` entry whose host original changed while the sandbox ran
+  (another sandbox of the same program exiting, an edit by hand) is no
+  longer overwritten with a warning. The `box _forward` wrapper now prints
+  a unified diff of the host file against the sandbox copy (`colordiff` or
+  `diff` when the sandbox has one, a built-in diff otherwise) and asks
+  whether to overwrite the host file or keep it. Keeping it, the default and the
+  only outcome without a terminal, saves the sandbox copy under
+  `~/.local/state/box/sync/` as `<name>.<date>-<time>`
+  (`.claude.json.20261019-153000`) to merge by hand; that directory is
+  bound at `/run/box/saved` inside the sandbox, the wrapper gets it with
+  `-W`, and `box clean` leaves it alone. Write-back of files that only the
+  sandbox changed is unchanged and silent.
 - Every sandbox now has a name of its own, shown in the `NAME` column of
   `box ps` and `box top` in place of the binary: the last component of the
   working directory it was started in, with `-2`, `-3`, ... appended while

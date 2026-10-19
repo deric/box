@@ -96,6 +96,9 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 		if plan.Pause != "" {
 			args = append(args, "-p", plan.Pause)
 		}
+		if len(plan.Sync) > 0 {
+			args = append(args, "-W", plan.SyncSave)
+		}
 		for _, sf := range plan.Sync {
 			args = append(args, "-w", sf.Arg())
 		}
