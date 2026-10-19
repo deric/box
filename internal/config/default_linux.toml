@@ -135,8 +135,10 @@ allow_hosts = [
 # Hostname inside the sandbox (empty keeps the host name).
 hostname = "box"
 
-# Start a new session (setsid). Protects against TIOCSTI terminal injection
-# but breaks shell job control (fg, bg, ^Z) for interactive programs.
+# Start a new session (setsid) when box run is not on a terminal; on one the
+# sandbox gets a pseudo-terminal and a session of its own anyway. Protects
+# against TIOCSTI terminal injection but breaks shell job control (fg, bg,
+# ^Z) for interactive programs.
 new_session = true
 
 # Forbid creating user namespaces inside the sandbox, so a program cannot
@@ -243,8 +245,11 @@ allow_hosts = [
 ]
 
 [binaries.bash]
-# With new_session = false, a sandboxed process shares the host terminal's session
-# and can use the TIOCSTI ioctl to inject keystrokes into the host shell, escaping the sandbox.
+# On a terminal the sandbox has a session of its own and job control works
+# regardless. Without one (box run -T, stdin or stdout redirected),
+# new_session = false shares the host terminal's session, where a sandboxed
+# process can use the TIOCSTI ioctl to inject keystrokes into the host shell,
+# escaping the sandbox.
 new_session = false
 
 # `box run podman build .` builds images in a sandbox of their own; the

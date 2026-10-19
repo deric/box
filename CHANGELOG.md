@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- On a terminal, `box run` gives the sandbox a pseudo-terminal of its own
+  and relays the host's terminal to it, so resizing the terminal reaches
+  programs inside as `SIGWINCH` and they redraw (Claude Code, editors,
+  pagers kept their old layout before). The sandbox runs in a session of
+  its own with that terminal as its controlling terminal: `^C` arrives as
+  `SIGINT`, `/dev/tty` opens, a shell inside has job control, and `^Z`
+  where nothing inside could resume suspends `box` itself for `fg`.
+  `box run -T` (`--no-pty`) runs on the host's terminal as before.
 - `pasta = true` gives a sandbox a network interface of its own through
   [pasta](https://passt.top) instead of the HTTP proxy, so any protocol
   reaches `allow_hosts`: ssh, git over ssh, gRPC, QUIC, and programs that
@@ -29,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `--new-session` is passed to `bwrap` only when `box run` is not on a
+  terminal: with a pseudo-terminal of its own the sandbox is in a new
+  session already, and `TIOCSTI` there only types into the sandbox.
 - A `sync_files` entry whose host original changed while the sandbox ran
   (another sandbox of the same program exiting, an edit by hand) is no
   longer overwritten with a warning. The `box _forward` wrapper now prints

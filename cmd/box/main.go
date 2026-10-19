@@ -39,7 +39,7 @@ var version = "dev"
 const usage = `box - run programs inside a sandbox (bwrap on Linux, sandbox-exec on macOS)
 
 Usage:
-  box run [-n] [-v] [-c FILE] <command> [args...]   run command in a sandbox
+  box run [-n] [-v] [-T] [-c FILE] <command> [args...]   run command in a sandbox
   box show [-c FILE] <command> [args...]             print the sandbox command line
   box config [-c FILE] [<command>]                   print the effective profile
   box init [-f] [-c FILE]                            write the default config file and create profile.d
@@ -54,6 +54,7 @@ Usage:
 Flags:
   -n, --dry-run   print the sandbox command instead of running it
   -v, --verbose   print the sandbox command before running it
+  -T, --no-pty    run on the host's terminal instead of a pseudo-terminal of the sandbox's own
   -c, --config    configuration file (default $BOX_CONFIG or ~/.config/box/box.toml)
   -i, --interval  refresh interval of box top (default 1s)
   -a, --all       list every overlay layer, podman dir, /tmp dir and log in box df
@@ -140,19 +141,56 @@ func (c *common) load() (*config.Config, error) {
 	return cfg, err
 }
 
+// cmdRun is `box run` and, with dryRun, `box show`.
+//
+// On a terminal, `box run` relays it to a pseudo-terminal of the sandbox's
+// own (see runOnPty): bwrap's --new-session would otherwise detach the
+// sandbox from the terminal's session, and the kernel would deliver no
+// SIGWINCH on resize (programs inside kept their layout), no SIGINT on ^C,
+// and refuse to open /dev/tty. The relay re-runs `box run` with -on-pty on
+// that terminal, which builds the plan and replaces itself with the runner
+// as usual, so the sandbox's PID (its /tmp directory, proxy socket and
+// scope are named after it) is the relayed process's. With a terminal of
+// its own the sandbox needs no --new-session: TIOCSTI there only types
+// into the sandbox itself. -T skips the relay.
 func cmdRun(argv []string, dryRun bool) error {
 	var c common
-	var verbose bool
+	var verbose, noPty, onPty bool
 	fs := newFlagSet("run", &c)
 	fs.BoolVar(&dryRun, "n", dryRun, "dry run")
 	fs.BoolVar(&dryRun, "dry-run", dryRun, "dry run")
 	fs.BoolVar(&verbose, "v", false, "verbose")
 	fs.BoolVar(&verbose, "verbose", false, "verbose")
+	fs.BoolVar(&noPty, "T", false, "no pseudo-terminal")
+	fs.BoolVar(&noPty, "no-pty", false, "no pseudo-terminal")
+	fs.BoolVar(&onPty, "on-pty", false, "started by box itself on the sandbox's pseudo-terminal (internal)")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 	if fs.NArg() == 0 {
 		return fmt.Errorf("missing command\n\n%s", usage)
+	}
+	if !dryRun && !noPty && !onPty && isTerminal(int(os.Stdin.Fd())) && isTerminal(int(os.Stdout.Fd())) {
+		self, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		args := []string{"run", "-on-pty"}
+		if c.configPath != "" {
+			args = append(args, "-c", c.configPath)
+		}
+		if verbose {
+			args = append(args, "-v")
+		}
+		args = append(append(args, "--"), fs.Args()...)
+		code, err := runOnPty(self, args, os.Stdin, os.Stdout, os.Stderr)
+		if err == nil {
+			os.Exit(code)
+		}
+		if !errors.Is(err, errNoPty) {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "box: warning:", err, "- running on the host's terminal")
 	}
 	cfg, err := c.load()
 	if err != nil {
@@ -169,6 +207,11 @@ func cmdRun(argv []string, dryRun bool) error {
 	binary := fs.Arg(0)
 	profiles := cfg.Match(cwd)
 	prof := cfg.Resolve(filepath.Base(binary), profiles...)
+	if onPty {
+		// The sandbox owns the terminal it is on; a new session would
+		// detach it from that one.
+		prof.NewSession = false
+	}
 	plan, err := sandbox.Build(prof, sandbox.Options{
 		Binary:   binary,
 		Args:     fs.Args()[1:],
