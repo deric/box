@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/deric/box/internal/config"
 )
@@ -507,11 +508,16 @@ func TestBuildSyncFiles(t *testing.T) {
 		t.Errorf("Sync[0] = %+v", plan.Sync[0])
 	}
 	cmd := " " + strings.Join(plan.Args, " ") + " "
+	saveDir := filepath.Join(DefaultTmpRoot, "sync")
+	if plan.SyncSave != saveDir || !slices.Contains(plan.Dirs, saveDir) {
+		t.Errorf("SyncSave = %q, Dirs = %v, want %s created", plan.SyncSave, plan.Dirs, saveDir)
+	}
 	for _, want := range []string{
 		" --perms 0600 --file " + strconv.Itoa(fd) + " " + file + " ",
 		" --bind " + file + " " + mountPoint + " ",
+		" --bind " + saveDir + " " + SaveDir + " ",
 		" --ro-bind " + self + " " + self + " ",
-		" -- " + self + " _forward -w " + file + "=" + mountPoint + " -- tool --flag ",
+		" -- " + self + " _forward -W " + saveDir + " -w " + file + "=" + mountPoint + " -- tool --flag ",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("missing %q in\n%s", want, cmd)
@@ -545,8 +551,8 @@ func TestSyncerWriteBack(t *testing.T) {
 	s := NewSyncer([]SyncFile{{Path: copy, Mount: host}})
 
 	// Identical content: nothing to do, the host file is not touched.
-	if warnings, err := s.WriteBack(); err != nil || len(warnings) != 0 {
-		t.Fatalf("WriteBack() = %v, %v", warnings, err)
+	if conflicts, err := s.WriteBack(); err != nil || len(conflicts) != 0 {
+		t.Fatalf("WriteBack() = %v, %v", conflicts, err)
 	}
 
 	// The program replaced its copy (new inode); the host gets the content
@@ -558,9 +564,9 @@ func TestSyncerWriteBack(t *testing.T) {
 	if err := os.Rename(tmp, copy); err != nil {
 		t.Fatal(err)
 	}
-	warnings, err := s.WriteBack()
-	if err != nil || len(warnings) != 0 {
-		t.Fatalf("WriteBack() = %v, %v", warnings, err)
+	conflicts, err := s.WriteBack()
+	if err != nil || len(conflicts) != 0 {
+		t.Fatalf("WriteBack() = %v, %v", conflicts, err)
 	}
 	if got, _ := os.ReadFile(host); string(got) != `{"a":2}` {
 		t.Errorf("host = %s, want the copy's content", got)
@@ -572,19 +578,55 @@ func TestSyncerWriteBack(t *testing.T) {
 		t.Errorf("host mode = %v, want 0600", fi.Mode().Perm())
 	}
 
-	// A host file edited meanwhile is overwritten with a warning.
+	// A host file edited meanwhile is left alone and reported as a
+	// conflict carrying both versions.
 	if err := os.WriteFile(host, []byte(`{"other":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(copy, []byte(`{"a":3}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	warnings, err = s.WriteBack()
-	if err != nil || len(warnings) != 1 || !strings.Contains(warnings[0], "changed on the host") {
-		t.Fatalf("WriteBack() = %v, %v, want one warning", warnings, err)
+	conflicts, err = s.WriteBack()
+	if err != nil || len(conflicts) != 1 {
+		t.Fatalf("WriteBack() = %v, %v, want one conflict", conflicts, err)
+	}
+	c := conflicts[0]
+	if c.File.Path != copy || string(c.Host) != `{"other":true}` || string(c.Copy) != `{"a":3}` {
+		t.Errorf("conflict = %+v", c)
+	}
+	if got, _ := os.ReadFile(host); string(got) != `{"other":true}` {
+		t.Errorf("host = %s, must be left alone on conflict", got)
+	}
+
+	// Saving keeps the host file and puts the copy aside under a dated name.
+	saveDir := filepath.Join(dir, "saved")
+	if err := os.Mkdir(saveDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 19, 15, 30, 0, 0, time.UTC)
+	name, err := c.Save(saveDir, at)
+	if err != nil || name != "copy.json.20261019-153000" {
+		t.Fatalf("Save() = %q, %v", name, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(saveDir, name)); string(got) != `{"a":3}` {
+		t.Errorf("saved = %s", got)
+	}
+	if got, _ := os.ReadFile(host); string(got) != `{"other":true}` {
+		t.Errorf("host = %s after Save", got)
+	}
+	if _, err := c.Save(filepath.Join(dir, "missing"), at); err == nil {
+		t.Error("Save into a missing directory should fail")
+	}
+
+	// Overwriting writes the copy over the host file, in place.
+	if err := c.Overwrite(); err != nil {
+		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(host); string(got) != `{"a":3}` {
-		t.Errorf("host = %s, want the copy's content", got)
+		t.Errorf("host = %s after Overwrite", got)
+	}
+	if hostInode() != before {
+		t.Error("Overwrite must rewrite in place")
 	}
 
 	// A copy removed inside leaves the host alone.

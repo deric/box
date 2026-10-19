@@ -258,8 +258,12 @@ type Plan struct {
 	// the listeners served inside the namespace rather than passed on.
 	Pasta *Pasta
 	// Sync lists copies (sync_files) written back to their host originals
-	// by the forwarder when the command exits.
-	Sync []SyncFile
+	// by the forwarder when the command exits. SyncSave is the host
+	// directory, bound at SaveDir, where the forwarder keeps a copy whose
+	// original changed on the host meanwhile and the user chose not to
+	// overwrite (see Conflict).
+	Sync     []SyncFile
+	SyncSave string
 	// Pause, when set, is the PID file of podman's pause process, which the
 	// forwarder creates inside the sandbox before running the command.
 	Pause string
@@ -721,6 +725,15 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 		// The original is bound where the forwarder can rewrite it in
 		// place; the copy at the real path may be replaced freely.
 		sf := SyncFile{Path: m.dest, Mount: filepath.Join(SyncDir, strconv.Itoa(len(plan.Sync)))}
+		if len(plan.Sync) == 0 {
+			root := opts.StateDir
+			if root == "" {
+				root = opts.TmpRoot
+			}
+			plan.SyncSave = filepath.Join(root, "sync")
+			plan.Dirs = append(plan.Dirs, plan.SyncSave)
+			add(&mount{kind: kindRW, src: plan.SyncSave, dest: SaveDir})
+		}
 		plan.Sync = append(plan.Sync, sf)
 		plan.Self = opts.Self
 		add(m)

@@ -249,7 +249,9 @@ func cmdFilter(argv []string) error {
 // keeps podman's pause process, whose PID it writes
 // to the given file; each -w path=mount names a sync_files copy that is
 // written back over its host original (bound at mount) once the command
-// exits.
+// exits, unless the original changed on the host meanwhile: then the user
+// is shown the difference and asked, and a copy kept aside lands in the
+// host directory given with -W (bound at sandbox.SaveDir).
 func cmdForward(argv []string) error {
 	fs := flag.NewFlagSet("_forward", flag.ExitOnError)
 	sock := fs.String("s", "", "proxy unix socket (no proxy when empty)")
@@ -259,6 +261,7 @@ func cmdForward(argv []string) error {
 	pausePid := fs.String("p", "", "PID file of the podman pause process to keep (none when empty)")
 	var syncArgs stringList
 	fs.Var(&syncArgs, "w", "sync file as path=mount (repeatable)")
+	saveDir := fs.String("W", "", "host directory bound at "+sandbox.SaveDir+" for sync file copies kept aside")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
@@ -352,12 +355,13 @@ func cmdForward(argv []string) error {
 		_ = c.Close()
 	}
 	sandbox.StopPause(pause)
-	warnings, serr := syncer.WriteBack()
-	for _, w := range warnings {
-		fmt.Fprintln(os.Stderr, "box: warning:", w)
-	}
+	conflicts, serr := syncer.WriteBack()
 	if serr != nil {
 		fmt.Fprintln(os.Stderr, "box:", serr)
+	}
+	if len(conflicts) > 0 {
+		ask := isTerminal(int(os.Stdin.Fd())) && isTerminal(int(os.Stderr.Fd()))
+		resolveConflicts(conflicts, ask, os.Stdin, os.Stderr, sandbox.SaveDir, *saveDir)
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {

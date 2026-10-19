@@ -235,7 +235,7 @@ with `?` to skip silently.
 | `tmpfs`           | list              | fresh tmpfs mounts                                             |
 | `overlays`        | list              | `"path"` or `{ path, persist }`; `persist = false` discards writes on exit |
 | `copy_files`      | list              | host files copied into the sandbox (`--file`); changes made inside never reach the host |
-| `sync_files`      | list              | like `copy_files`, but the copy is written back over the host file when the command exits |
+| `sync_files`      | list              | like `copy_files`, but the copy is written back over the host file when the command exits; if the host file changed meanwhile you are shown the diff and asked |
 | `drop_binds`      | list              | inherited entries to remove (binary sections only)             |
 | `network`         | bool              | share the host network; `false` gives an empty namespace       |
 | `proxy`           | bool              | with `network = false`: reach `allow_hosts` through a proxy on the host |
@@ -577,7 +577,18 @@ the same build in CI and attaches the artifacts to a GitHub release.
   the same and additionally binds the host original read-write under
   `/run/box/sync/`; when the command exits, the `box _forward` wrapper that
   runs it compares the copy with the original and, if they differ, rewrites
-  the original in place (same inode, mode and owner). This suits files their
+  the original in place (same inode, mode and owner). An original that
+  changed on the host while the sandbox ran (another `box` sandbox of the
+  same program exiting, or an edit by hand) is never overwritten
+  unasked: the wrapper prints a unified diff of the host file against the
+  sandbox copy (through `colordiff` or `diff` when the sandbox has one on
+  its `PATH`, with a built-in diff otherwise) and asks whether to overwrite
+  it or to keep it. Keeping it
+  (the default, and what happens without a terminal to ask on) saves the
+  sandbox copy as `~/.local/state/box/sync/<name>.<date>-<time>`, e.g.
+  `.claude.json.20261019-153000`, for you to merge by hand; that directory
+  is bound at `/run/box/saved` inside the sandbox and `box clean` leaves it
+  alone. This suits files their
   owner saves by writing a temporary file and renaming it over the original,
   which fails with `EBUSY` on a file that is itself a bind mount. Claude
   Code's `~/.claude.json` (folder trust, MCP servers, account state) is such
