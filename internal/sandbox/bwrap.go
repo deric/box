@@ -12,16 +12,17 @@ import (
 
 // buildBwrap computes the bwrap command line; exe is the bwrap executable.
 func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
-	plan := &Plan{Name: filepath.Base(opts.Binary), Exe: exe}
+	plan := &Plan{Binary: filepath.Base(opts.Binary), Exe: exe}
 	mounts, err := collect(prof, &opts, plan, false)
 	if err != nil {
 		return nil, err
 	}
+	plan.Name = opts.Name
 	if plan.Limits, err = limits(prof); err != nil {
 		return nil, err
 	}
 	if plan.Limits != nil {
-		plan.Scope = ScopeName(plan.Name, opts.ID)
+		plan.Scope = ScopeName(plan.Binary, opts.ID)
 	}
 
 	args := []string{"--unshare-all"}
@@ -74,7 +75,7 @@ func buildBwrap(prof config.Profile, opts Options, exe string) (*Plan, error) {
 		}
 	}
 	if prof.Podman {
-		for _, kv := range podmanEnv(os.Getuid(), PodmanDir(opts.StateDir, plan.Name)) {
+		for _, kv := range podmanEnv(os.Getuid(), PodmanDir(opts.StateDir, plan.Binary)) {
 			if _, set := prof.Env[kv[0]]; !set {
 				args = append(args, "--setenv", kv[0], kv[1])
 			}

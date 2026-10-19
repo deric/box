@@ -117,7 +117,7 @@ func podmanMounts(opts *Options, plan *Plan) ([]*mount, error) {
 	if opts.StateDir == "" {
 		return nil, fmt.Errorf("podman requires a state directory")
 	}
-	dir := PodmanDir(opts.StateDir, plan.Name)
+	dir := PodmanDir(opts.StateDir, plan.Binary)
 	plan.Pause = PausePidFile(os.Getuid())
 	plan.Self = opts.Self
 	plan.Dirs = append(plan.Dirs, dir)

@@ -83,11 +83,12 @@ const seatbeltNetwork = `
 // only filters access to the real filesystem, so tmpfs paths are hidden
 // rather than replaced and overlays are read-only (collect warns).
 func buildSeatbelt(prof config.Profile, opts Options, exe string) (*Plan, error) {
-	plan := &Plan{Name: filepath.Base(opts.Binary), Exe: exe}
+	plan := &Plan{Binary: filepath.Base(opts.Binary), Exe: exe}
 	mounts, err := collect(prof, &opts, plan, true)
 	if err != nil {
 		return nil, err
 	}
+	plan.Name = opts.Name
 	if prof.Hostname != "" {
 		plan.Warnings = append(plan.Warnings, "hostname is not supported by sandbox-exec; ignored")
 	}
@@ -130,7 +131,7 @@ func buildSeatbelt(prof config.Profile, opts Options, exe string) (*Plan, error)
 	for _, k := range sortedKeys(prof.Env) {
 		plan.Env = append(plan.Env, k+"="+prof.Env[k])
 	}
-	plan.Env = append(plan.Env, NameEnv+"="+plan.Name, DirEnv+"="+opts.Cwd)
+	plan.Env = append(plan.Env, NameEnv+"="+plan.Name, BinaryEnv+"="+plan.Binary, DirEnv+"="+opts.Cwd)
 	plan.Dir = opts.Cwd
 
 	args := append([]string{}, prof.ExtraArgs...)

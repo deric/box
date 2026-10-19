@@ -83,7 +83,7 @@ func (s *topState) update(list []procs.Sandbox, err error, now time.Time) {
 	next := make(map[int]topSample, len(list))
 	s.rows = s.rows[:0]
 	for _, sb := range list {
-		if s.filter != "" && sb.Name != s.filter {
+		if s.filter != "" && sb.Name != s.filter && sb.Binary != s.filter {
 			continue
 		}
 		var pct float64

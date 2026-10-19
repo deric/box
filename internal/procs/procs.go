@@ -20,7 +20,8 @@ const clockTicks = 100
 // Sandbox summarizes one running sandbox and every process inside it.
 type Sandbox struct {
 	PID     int           // outermost bwrap process
-	Name    string        // base name of the sandboxed binary
+	Name    string        // name of the sandbox, unique among the running ones
+	Binary  string        // base name of the sandboxed binary
 	Command []string      // command run inside the sandbox
 	Dir     string        // working directory inside the sandbox
 	Procs   int           // processes in the tree, bwrap included
@@ -70,20 +71,34 @@ func List(root, prefix string) ([]Sandbox, error) {
 		}
 		s := Sandbox{Name: strings.TrimPrefix(p.argv[0], prefix)}
 		s.Command, s.Dir = parseArgs(p.argv[1:])
+		s.Binary = binaryOf(s.Command)
 		return s, true
 	}), nil
 }
 
-// Running reports whether pid is a live sandbox for binary name: a process
-// whose argv[0] is prefix+name. Unlike List it also recognizes a sandbox
-// nested inside another one. root is the procfs mount point.
-func Running(root, prefix string, pid int, name string) bool {
+// Running reports whether pid is a live sandbox of the given binary: a
+// process whose argv[0] starts with prefix and whose command is the binary.
+// Unlike List it also recognizes a sandbox nested inside another one. root
+// is the procfs mount point.
+func Running(root, prefix string, pid int, binary string) bool {
 	cmdline, err := os.ReadFile(filepath.Join(root, strconv.Itoa(pid), "cmdline"))
 	if err != nil {
 		return false
 	}
-	argv0, _, _ := bytes.Cut(cmdline, []byte{0})
-	return string(argv0) == prefix+name
+	argv := strings.Split(string(bytes.TrimSuffix(cmdline, []byte{0})), "\x00")
+	if !strings.HasPrefix(argv[0], prefix) {
+		return false
+	}
+	cmd, _ := parseArgs(argv[1:])
+	return binaryOf(cmd) == binary
+}
+
+// binaryOf returns the base name of a sandboxed command's binary.
+func binaryOf(cmd []string) string {
+	if len(cmd) == 0 {
+		return ""
+	}
+	return filepath.Base(cmd[0])
 }
 
 // group builds one Sandbox per process tree whose root is tagged and has an

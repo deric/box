@@ -99,7 +99,7 @@ func TestBuildPasta(t *testing.T) {
 		t.Errorf("ProxyCommand() = %s", pc)
 	}
 	// unshare runs `box _netns -pasta` with what the resolver needs.
-	prefix := fmt.Sprintf("/usr/bin/unshare -U -n --map-user=%d --map-group=%d --keep-caps -- %s _netns -n tool -pasta -s %s -l %s -f /usr/sbin/nft -a github.com -a '*.golang.org' -- bwrap --unshare-all --share-net ",
+	prefix := fmt.Sprintf("/usr/bin/unshare -U -n --map-user=%d --map-group=%d --keep-caps -- %s _netns -n project -pasta -s %s -l %s -f /usr/sbin/nft -a github.com -a '*.golang.org' -- bwrap --unshare-all --share-net ",
 		os.Getuid(), os.Getgid(), opts.Self, shellQuote(plan.Proxy.Socket), shellQuote(plan.Proxy.Log))
 	if line := plan.Command(); !strings.HasPrefix(line, prefix) {
 		t.Errorf("Command() = %s\nwant prefix %s", line, prefix)

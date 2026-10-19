@@ -47,12 +47,12 @@ func TestList(t *testing.T) {
 	}
 	bwrapArgs := []string{"--unshare-all", "--chdir", "/work", "--", "claude", "--resume"}
 	// Sandbox: outer bwrap -> inner bwrap -> claude -> node (comm with spaces).
-	writeProc(t, root, 100, 1, "bwrap", 1, 1, 500, 10, append([]string{"box:claude"}, bwrapArgs...)...)
-	writeProc(t, root, 101, 100, "bwrap", 0, 0, 501, 5, append([]string{"box:claude"}, bwrapArgs...)...)
+	writeProc(t, root, 100, 1, "bwrap", 1, 1, 500, 10, append([]string{"box:work"}, bwrapArgs...)...)
+	writeProc(t, root, 101, 100, "bwrap", 0, 0, 501, 5, append([]string{"box:work"}, bwrapArgs...)...)
 	writeProc(t, root, 102, 101, "claude", 100, 50, 502, 1000, "claude", "--resume")
 	writeProc(t, root, 103, 102, "a (b) c", 48, 0, 503, 200, "node")
 	// A later sandbox started first in PID order.
-	writeProc(t, root, 50, 1, "bwrap", 0, 0, 900, 1, "box:sh", "--", "sh")
+	writeProc(t, root, 50, 1, "bwrap", 0, 0, 900, 1, "box:work-2", "--", "/bin/sh")
 	// Unrelated processes, including a bwrap not started by box.
 	writeProc(t, root, 200, 1, "bwrap", 0, 0, 100, 1, "bwrap", "--", "flatpak")
 	writeProc(t, root, 201, 1, "bash", 0, 0, 100, 1, "bash")
@@ -67,7 +67,7 @@ func TestList(t *testing.T) {
 		t.Fatalf("got %d sandboxes, want 2: %+v", len(got), got)
 	}
 	s := got[0]
-	if s.PID != 100 || s.Name != "claude" || s.Dir != "/work" || s.Procs != 4 {
+	if s.PID != 100 || s.Name != "work" || s.Binary != "claude" || s.Dir != "/work" || s.Procs != 4 {
 		t.Errorf("unexpected sandbox %+v", s)
 	}
 	if strings.Join(s.Command, " ") != "claude --resume" {
@@ -82,7 +82,7 @@ func TestList(t *testing.T) {
 	if want := time.Unix(1005, 0); !s.Started.Equal(want) {
 		t.Errorf("started = %v, want %v", s.Started, want)
 	}
-	if got[1].PID != 50 || got[1].Name != "sh" || got[1].Procs != 1 {
+	if got[1].PID != 50 || got[1].Name != "work-2" || got[1].Binary != "sh" || got[1].Procs != 1 {
 		t.Errorf("unexpected second sandbox %+v", got[1])
 	}
 }
@@ -139,19 +139,19 @@ func TestParseProcArgs(t *testing.T) {
 
 func TestGroupByEnv(t *testing.T) {
 	start := time.Unix(1000, 0)
-	tag := []string{"BOX_NAME=claude", "BOX_DIR=/work"}
+	tag := []string{"BOX_NAME=work", "BOX_BINARY=claude", "BOX_DIR=/work"}
 	all := map[int]*proc{
 		10: {pid: 10, ppid: 1, argv: []string{"zsh"}, started: start},
 		11: {pid: 11, ppid: 10, argv: []string{"claude", "-c"}, env: tag, cpu: time.Second, rss: 100, started: start.Add(time.Second)},
 		12: {pid: 12, ppid: 11, argv: []string{"node"}, env: tag, cpu: time.Second, rss: 50},
 		13: {pid: 13, ppid: 12, cpu: time.Second}, // unreadable, still counted
 	}
-	got := group(all, envTag("BOX_NAME", "BOX_DIR"))
+	got := group(all, envTag("BOX_NAME", "BOX_BINARY", "BOX_DIR"))
 	if len(got) != 1 {
 		t.Fatalf("got %+v", got)
 	}
 	s := got[0]
-	if s.PID != 11 || s.Name != "claude" || s.Dir != "/work" || s.Procs != 3 || s.CPU != 3*time.Second ||
+	if s.PID != 11 || s.Name != "work" || s.Binary != "claude" || s.Dir != "/work" || s.Procs != 3 || s.CPU != 3*time.Second ||
 		s.RSS != 150 || !slices.Equal(s.Command, []string{"claude", "-c"}) {
 		t.Errorf("unexpected sandbox %+v", s)
 	}
@@ -170,7 +170,8 @@ func TestParseArgsSkipsForwarder(t *testing.T) {
 
 func TestRunning(t *testing.T) {
 	root := t.TempDir()
-	writeProc(t, root, 100, 1, "bwrap", 0, 0, 0, 0, "box:claude", "--", "claude")
+	writeProc(t, root, 100, 1, "bwrap", 0, 0, 0, 0, "box:work", "--", "/usr/bin/claude")
+	writeProc(t, root, 101, 1, "bwrap", 0, 0, 0, 0, "box:work-2", "--", "/usr/bin/box", "_forward", "-s", "/run/box/proxy.sock", "--", "sh")
 	writeProc(t, root, 200, 1, "bwrap", 0, 0, 0, 0, "bwrap", "--", "flatpak")
 	for _, tc := range []struct {
 		pid  int
@@ -178,7 +179,9 @@ func TestRunning(t *testing.T) {
 		want bool
 	}{
 		{100, "claude", true},
+		{100, "work", false}, // the sandbox name is not the binary
 		{100, "sh", false},
+		{101, "sh", true},
 		{200, "flatpak", false},
 		{300, "claude", false},
 	} {

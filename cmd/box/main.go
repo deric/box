@@ -45,8 +45,8 @@ Usage:
   box init [-f] [-c FILE]                            write the default config file and create profile.d
   box clean [-c FILE] [<command>]                    delete overlay layers, podman images, stale /tmp dirs and logs
   box df [-a] [-c FILE] [<command>]                  show disk usage of overlay layers, podman images, /tmp dirs and logs
-  box ps [<command>]                                 list running sandboxes
-  box top [-i DURATION] [-c FILE] [<command>]        watch running sandboxes and denied connections
+  box ps [<name>]                                    list running sandboxes
+  box top [-i DURATION] [-c FILE] [<name>]           watch running sandboxes and denied connections
   box info [-c FILE]                                 print version, isolation mechanism, limits, config path, log dir
   box doctor [-c FILE]                               check the host for everything box needs and say how to fix what is missing
   box version
@@ -173,6 +173,7 @@ func cmdRun(argv []string, dryRun bool) error {
 		Binary:   binary,
 		Args:     fs.Args()[1:],
 		Cwd:      cwd,
+		Name:     sandboxName(cwd, binary),
 		StateDir: stateDir,
 	})
 	if err != nil {
@@ -204,6 +205,29 @@ func cmdRun(argv []string, dryRun bool) error {
 		fmt.Fprintln(os.Stderr, "box:", plan.Command())
 	}
 	return plan.Exec()
+}
+
+// sandboxName picks the name of a new sandbox started in cwd: the last
+// component of cwd (see sandbox.DefaultName), kept apart from the running
+// sandboxes by uniqueName. When they cannot be listed the default is used
+// as is.
+func sandboxName(cwd, binary string) string {
+	list, _ := procs.Sandboxes()
+	return uniqueName(sandbox.DefaultName(cwd, binary), list)
+}
+
+// uniqueName returns base, or base-2, base-3, ... when a sandbox in running
+// already has that name.
+func uniqueName(base string, running []procs.Sandbox) string {
+	taken := make(map[string]bool, len(running))
+	for _, s := range running {
+		taken[s.Name] = true
+	}
+	name := base
+	for n := 2; taken[name]; n++ {
+		name = base + "-" + strconv.Itoa(n)
+	}
+	return name
 }
 
 func cmdConfig(argv []string) error {
@@ -532,7 +556,7 @@ func cmdPs(argv []string) error {
 		return err
 	}
 	for _, s := range list {
-		if filter != "" && s.Name != filter {
+		if filter != "" && s.Name != filter && s.Binary != filter {
 			continue
 		}
 		if _, err := fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
@@ -674,7 +698,7 @@ func countSandboxes() string {
 	}
 	counts := map[string]int{}
 	for _, s := range list {
-		counts[s.Name]++
+		counts[s.Binary]++
 	}
 	names := make([]string, 0, len(counts))
 	for name := range counts {

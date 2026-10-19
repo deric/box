@@ -100,7 +100,7 @@ func TestBuildDNS(t *testing.T) {
 	if pc := plan.ProxyCommand(); !strings.Contains(pc, " _proxy -s ") || !strings.Contains(pc, " -d -a github.com") {
 		t.Errorf("ProxyCommand() = %s", pc)
 	}
-	prefix := fmt.Sprintf("/usr/bin/unshare -U -n --map-user=%d --map-group=%d --keep-caps -- %s _netns -u %s -t %s -n tool -- bwrap --unshare-all --share-net ",
+	prefix := fmt.Sprintf("/usr/bin/unshare -U -n --map-user=%d --map-group=%d --keep-caps -- %s _netns -u %s -t %s -n project -- bwrap --unshare-all --share-net ",
 		os.Getuid(), os.Getgid(), self, udp, tcp)
 	line := plan.Command()
 	if !strings.HasPrefix(line, prefix) {

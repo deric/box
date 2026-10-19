@@ -28,6 +28,10 @@ type Options struct {
 	Cwd      string   // host working directory; defaults to os.Getwd()
 	Home     string   // host home directory; defaults to os.UserHomeDir()
 	StateDir string   // root for persistent overlay layers
+	// Name is the sandbox's name, which `box ps` shows; defaults to
+	// DefaultName(Cwd, Binary). Callers keep it unique among the running
+	// sandboxes.
+	Name string
 	// TmpRoot holds the private /tmp directories; defaults to DefaultTmpRoot.
 	TmpRoot string
 	// ID identifies this sandbox in TmpRoot; defaults to the current PID,
@@ -198,21 +202,34 @@ func ScopeName(name, id string) string {
 }
 
 // ProcTitlePrefix starts argv[0] of every bwrap process started by Exec,
-// followed by the sandboxed binary's base name. It lets `box ps` tell box
-// sandboxes apart from other bwrap users.
+// followed by the sandbox's name. It lets `box ps` tell box sandboxes apart
+// from other bwrap users.
 const ProcTitlePrefix = "box:"
 
-// NameEnv and DirEnv are set inside macOS sandboxes to the binary's base name
-// and the working directory. Seatbelt leaves no wrapper process behind, so
-// `box ps` finds sandboxes by these variables instead of ProcTitlePrefix.
+// NameEnv, BinaryEnv and DirEnv are set inside macOS sandboxes to the
+// sandbox's name, the binary's base name and the working directory.
+// Seatbelt leaves no wrapper process behind, so `box ps` finds sandboxes by
+// these variables instead of ProcTitlePrefix.
 const (
-	NameEnv = "BOX_NAME"
-	DirEnv  = "BOX_DIR"
+	NameEnv   = "BOX_NAME"
+	BinaryEnv = "BOX_BINARY"
+	DirEnv    = "BOX_DIR"
 )
+
+// DefaultName returns the name a sandbox started in cwd gets unless one is
+// given: the last component of cwd, or the binary's base name when cwd has
+// none (the root directory).
+func DefaultName(cwd, binary string) string {
+	if name := filepath.Base(cwd); name != "" && name != "." && name != string(filepath.Separator) {
+		return name
+	}
+	return filepath.Base(binary)
+}
 
 // Plan is a fully computed sandbox invocation.
 type Plan struct {
-	Name     string   // base name of the sandboxed binary
+	Name     string   // name of the sandbox, as `box ps` shows it (Options.Name)
+	Binary   string   // base name of the sandboxed binary
 	Exe      string   // path to the sandbox runner (bwrap or sandbox-exec)
 	Args     []string // runner arguments, without argv[0]
 	Warnings []string
@@ -429,7 +446,7 @@ func (p *Plan) Exec() error {
 	}
 	if p.Limits != nil {
 		// Before the proxy is forked, so that it lives in the scope too.
-		warnings, err := applyLimits(p.Scope, p.Name, *p.Limits)
+		warnings, err := applyLimits(p.Scope, p.Binary, *p.Limits)
 		if err != nil {
 			warnings = append(warnings, "resource limits not applied: "+err.Error())
 		}
@@ -679,7 +696,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 		if resolveLinks {
 			plan.Warnings = append(plan.Warnings, "private_tmp is not supported on this platform; ignored")
 		} else {
-			plan.TmpDir = TmpDir(opts.TmpRoot, plan.Name, opts.ID)
+			plan.TmpDir = TmpDir(opts.TmpRoot, plan.Binary, opts.ID)
 			add(&mount{kind: kindRW, src: plan.TmpDir, dest: "/tmp", visible: true})
 		}
 	}
@@ -713,7 +730,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 		if resolveLinks {
 			plan.Warnings = append(plan.Warnings, "proxy is not supported on this platform; ignored (no network)")
 		} else {
-			sock, logFile := ProxyFiles(opts.TmpRoot, logDir(prof, *opts), plan.Name, opts.ID, opts.Cwd)
+			sock, logFile := ProxyFiles(opts.TmpRoot, logDir(prof, *opts), plan.Binary, opts.ID, opts.Cwd)
 			plan.Proxy = &Proxy{Socket: sock, Log: logFile, Allow: prof.AllowHosts}
 			plan.Self = opts.Self
 			if prof.Pasta {
@@ -795,7 +812,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			if opts.StateDir == "" {
 				return nil, fmt.Errorf("persistent overlay %s requires a state directory", src)
 			}
-			layer := filepath.Join(opts.StateDir, "overlays", plan.Name, layerName(src))
+			layer := filepath.Join(opts.StateDir, "overlays", plan.Binary, layerName(src))
 			m.upper = filepath.Join(layer, "upper")
 			m.work = filepath.Join(layer, "work")
 			plan.Dirs = append(plan.Dirs, m.upper, m.work)
@@ -811,7 +828,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 	if !filepath.IsAbs(resolved) {
 		resolved = filepath.Join(opts.Cwd, resolved)
 	}
-	if err := staleBinary(mounts, resolved, plan.Name); err != nil {
+	if err := staleBinary(mounts, resolved, plan.Binary); err != nil {
 		return nil, err
 	}
 	var expose []string
@@ -871,6 +888,9 @@ func fillDefaults(o *Options) error {
 	}
 	if o.ID == "" {
 		o.ID = strconv.Itoa(os.Getpid())
+	}
+	if o.Name == "" {
+		o.Name = DefaultName(o.Cwd, o.Binary)
 	}
 	if o.Self == "" {
 		if o.Self, err = os.Executable(); err != nil {
