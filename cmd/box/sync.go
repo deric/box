@@ -23,36 +23,42 @@ import (
 func resolveConflicts(conflicts []sandbox.Conflict, ask bool, in io.Reader, out io.Writer, saveDir, hostDir string) {
 	r := bufio.NewReader(in)
 	for _, c := range conflicts {
-		fmt.Fprintf(out, "box: %s changed on the host while the sandbox ran, and the sandbox changed its copy:\n", c.File.Path)
+		say(out, "box: %s changed on the host while the sandbox ran, and the sandbox changed its copy:\n", c.File.Path)
 		if err := diff.Write(out, c.File.Path+" (host)", c.File.Path+" (sandbox)", c.Host, c.Copy); err != nil {
-			fmt.Fprintln(out, "box:", err)
+			say(out, "box: %v\n", err)
 		}
 		overwrite := false
 		if ask {
 			overwrite = askOverwrite(r, out, c.File.Path)
 		} else {
-			fmt.Fprintln(out, "box: warning: no terminal to ask; keeping the host file")
+			say(out, "box: warning: no terminal to ask; keeping the host file\n")
 		}
 		if overwrite {
 			if err := c.Overwrite(); err != nil {
-				fmt.Fprintln(out, "box:", err)
+				say(out, "box: %v\n", err)
 			}
 			continue
 		}
 		name, err := c.Save(saveDir, time.Now())
 		if err != nil {
-			fmt.Fprintln(out, "box:", err)
+			say(out, "box: %v\n", err)
 			continue
 		}
-		fmt.Fprintf(out, "box: kept %s; the sandbox copy is saved as %s to merge by hand\n", c.File.Path, filepath.Join(hostDir, name))
+		say(out, "box: kept %s; the sandbox copy is saved as %s to merge by hand\n", c.File.Path, filepath.Join(hostDir, name))
 	}
+}
+
+// say prints a message for the user on out. A failed write to the terminal
+// has nowhere else to be reported, so the error is dropped.
+func say(out io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(out, format, args...)
 }
 
 // askOverwrite puts the question for path and reads the answer: true to
 // overwrite, false (the default, also on end of input) to keep and save.
 func askOverwrite(r *bufio.Reader, out io.Writer, path string) bool {
 	for {
-		fmt.Fprintf(out, "box: overwrite %s with the sandbox copy, or keep it and save the copy aside to merge by hand? [o/K] ", path)
+		say(out, "box: overwrite %s with the sandbox copy, or keep it and save the copy aside to merge by hand? [o/K] ", path)
 		line, err := r.ReadString('\n')
 		answer := strings.ToLower(strings.TrimSpace(line))
 		switch answer {
@@ -62,7 +68,7 @@ func askOverwrite(r *bufio.Reader, out io.Writer, path string) bool {
 			return false
 		}
 		if err != nil {
-			fmt.Fprintln(out)
+			say(out, "\n")
 			return false
 		}
 	}
