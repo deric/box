@@ -92,8 +92,9 @@ func parseProcArgs(buf []byte) (argv, env []string) {
 }
 
 // envTag tags processes by the environment variables box sets inside macOS
-// sandboxes: nameKey holds the sandbox name and dirKey its directory.
-func envTag(nameKey, dirKey string) func(*proc) (Sandbox, bool) {
+// sandboxes: nameKey holds the sandbox name, binKey the binary's base name
+// and dirKey the directory.
+func envTag(nameKey, binKey, dirKey string) func(*proc) (Sandbox, bool) {
 	return func(p *proc) (Sandbox, bool) {
 		s := Sandbox{Command: p.argv}
 		found := false
@@ -101,6 +102,8 @@ func envTag(nameKey, dirKey string) func(*proc) (Sandbox, bool) {
 			switch k, v, _ := strings.Cut(kv, "="); k {
 			case nameKey:
 				s.Name, found = v, true
+			case binKey:
+				s.Binary = v
 			case dirKey:
 				s.Dir = v
 			}

@@ -93,7 +93,7 @@ func TestBuildSeatbelt(t *testing.T) {
 		t.Error("seatbelt_rules must come last so they take precedence")
 	}
 
-	if want := []string{"BOX_T_PASS=yes", "A=1", "B=2", "BOX_NAME=tool", "BOX_DIR=" + cwd}; !slices.Equal(plan.Env, want) {
+	if want := []string{"BOX_T_PASS=yes", "A=1", "B=2", "BOX_NAME=" + filepath.Base(cwd), "BOX_BINARY=tool", "BOX_DIR=" + cwd}; !slices.Equal(plan.Env, want) {
 		t.Errorf("env = %q, want %q", plan.Env, want)
 	}
 	if !plan.ClearEnv || !slices.Equal(plan.UnsetEnv, []string{"GONE"}) || plan.Dir != cwd {
@@ -110,7 +110,7 @@ func TestBuildSeatbelt(t *testing.T) {
 	if !overlayWarned || !hostnameWarned || len(plan.Warnings) != 2 {
 		t.Errorf("want overlay and hostname warnings, got %q", plan.Warnings)
 	}
-	if cmd := plan.Command(); !strings.HasPrefix(cmd, "env -i -u GONE BOX_T_PASS=yes A=1 B=2 BOX_NAME=tool ") {
+	if cmd := plan.Command(); !strings.HasPrefix(cmd, "env -i -u GONE BOX_T_PASS=yes A=1 B=2 BOX_NAME="+filepath.Base(cwd)+" BOX_BINARY=tool ") {
 		t.Errorf("command = %s", cmd)
 	}
 }
@@ -184,7 +184,7 @@ cat ../secret 2> /dev/null && fail "file under the hidden \$HOME is readable"
 touch ../new 2> /dev/null && fail "hidden \$HOME is writable"
 touch /usr/bin/box-test 2> /dev/null && fail "/usr is writable"
 ls /Users > /dev/null 2>&1 && fail "/Users is listable"
-echo "ok $BOX_NAME $BOX_SANDBOX"
+echo "ok $BOX_NAME $BOX_BINARY $BOX_SANDBOX"
 `
 	plan, err := Build(cfg.Resolve("sh"), Options{
 		Binary: "/bin/sh", Args: []string{"-c", script}, Cwd: cwd, Home: home,
@@ -195,7 +195,7 @@ echo "ok $BOX_NAME $BOX_SANDBOX"
 	cmd := exec.Command(plan.Exe, plan.Args...)
 	cmd.Dir, cmd.Env = plan.Dir, plan.environ()
 	out, err := cmd.CombinedOutput()
-	if err != nil || strings.TrimSpace(string(out)) != "ok sh 1" {
+	if err != nil || strings.TrimSpace(string(out)) != "ok "+filepath.Base(cwd)+" sh 1" {
 		t.Fatalf("sandboxed shell failed: %v\n%s\nprofile:\n%s", err, out, plan.Args[1])
 	}
 	if data, err := os.ReadFile(filepath.Join(cwd, "out.txt")); err != nil || string(data) != "hello\n" {

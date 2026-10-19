@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every sandbox now has a name of its own, shown in the `NAME` column of
+  `box ps` and `box top` in place of the binary: the last component of the
+  working directory it was started in, with `-2`, `-3`, ... appended while
+  a running sandbox already has that name (`box` and `box-2` for two
+  sandboxes started in `~/dev/box`). A name argument to `box ps` and
+  `box top` matches either the sandbox name or the binary. bwrap's
+  `argv[0]` carries the name (`box:<name>`), and on macOS `BOX_NAME` holds
+  it with the binary's base name in the new `BOX_BINARY`. Overlay layers,
+  the podman store, private `/tmp` directories, logs and the systemd scope
+  stay keyed by the binary, as do `box clean` and `box df`.
 - `box doctor` no longer suggests reinstalling an `unshare-userns-restrict`
   AppArmor profile when Ubuntu's user namespace restriction keeps `unshare`
   from creating the DNS namespace: no package ships one (Ubuntu 26.04 has

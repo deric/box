@@ -211,12 +211,12 @@ func (d denial) sandboxNames() string {
 
 // deniedFiles finds the proxy logs of the given sandboxes in logDirs,
 // keyed by path with the sandbox name as value. A log is
-// <name>-<pid>-<dir>.log (see sandbox.ProxyFiles); it belongs to a sandbox
-// when name and PID match. Unreadable directories are skipped.
+// <binary>-<pid>-<dir>.log (see sandbox.ProxyFiles); it belongs to a
+// sandbox when binary and PID match. Unreadable directories are skipped.
 func deniedFiles(logDirs []string, list []procs.Sandbox) map[string]string {
-	running := map[int]string{}
+	running := map[int]procs.Sandbox{}
 	for _, sb := range list {
-		running[sb.PID] = sb.Name
+		running[sb.PID] = sb
 	}
 	files := map[string]string{}
 	for _, dir := range logDirs {
@@ -230,10 +230,11 @@ func deniedFiles(logDirs []string, list []procs.Sandbox) map[string]string {
 				continue
 			}
 			bin, pid, ok := splitEntry(strings.TrimSuffix(name, ".log"), true)
-			if !ok || running[pid] != bin {
+			sb, live := running[pid]
+			if !ok || !live || sb.Binary != bin {
 				continue
 			}
-			files[filepath.Join(dir, name)] = bin
+			files[filepath.Join(dir, name)] = sb.Name
 		}
 	}
 	return files

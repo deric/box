@@ -20,8 +20,9 @@ box run podman build -t app .   # build an image in a sandbox of its own (see Po
 box clean claude                # drop claude's overlay layers, podman images and stale private /tmp dirs
 box df                          # disk usage per binary: overlay layers, podman images, private /tmp dirs, logs
 box df -a claude                # the same listing every layer, /tmp dir and log of claude
-box ps                          # list running sandboxes with process count, CPU, memory
+box ps                          # list running sandboxes by name (the working directory's) with process count, CPU, memory
 box top                         # the same as a live view that refreshes every second, plus what the proxy denied
+box ps api                      # only the sandbox named api, or those running a binary called api
 box info                        # print version, isolation mechanism, config path, log dir, running sandboxes
 box doctor                      # check the host for everything box needs and say how to fix what is missing
 ```
@@ -32,7 +33,7 @@ box doctor                      # check the host for everything box needs and sa
 |----------------------------------|------------------------------------------------------|
 | `/usr`, `/bin`, `/lib*`, `/etc`  | read-only (merged-/usr symlinks are recreated)       |
 | current directory                | read-write                                           |
-| `/tmp`                           | private: a fresh host dir `/tmp/box/<name>-<pid>`    |
+| `/tmp`                           | private: a fresh host dir `/tmp/box/<binary>-<pid>`  |
 | `/var/tmp`                       | empty tmpfs, 1 GiB at most                           |
 | `$HOME`                          | empty tmpfs, 1 GiB at most; only listed paths underneath are visible |
 | `~/.local/share/mise`, `~/.local/bin` | overlay: host content visible, writes land in a per-binary upper layer under `~/.local/state/box/overlays/` |
@@ -56,7 +57,7 @@ Every sandbox runs in a cgroup of its own with a CPU and a memory limit
 (`cpus`, `memory`), and each tmpfs mount is capped in size (`tmpfs_size`).
 Since an unprivileged process cannot write the cgroup it was started in,
 `box` asks the systemd user manager for a transient scope unit named
-`box-<name>-<pid>.scope` with the limits as properties and its own PID as
+`box-<binary>-<pid>.scope` with the limits as properties and its own PID as
 member, which is what `systemd-run --user --scope` does, and then replaces
 itself with `bwrap` as usual; the scope covers the sandboxed program,
 everything it starts and the host-side proxy, and ends with them.
@@ -82,14 +83,14 @@ of inspecting it from the host.
 ### Network
 
 The sandbox has no network of its own. Instead `box` starts a small HTTP
-proxy on the host, listening on a unix socket (`/tmp/box/<name>-<pid>.sock`)
+proxy on the host, listening on a unix socket (`/tmp/box/<binary>-<pid>.sock`)
 that is bound into the sandbox at `/run/box/proxy.sock`. Inside, `box`
 exposes it on `127.0.0.1:3128` and sets `HTTP_PROXY`, `HTTPS_PROXY` and
 `NO_PROXY` accordingly, then runs the command as its child. The proxy
 handles `CONNECT` (HTTPS) and plain HTTP requests and only lets them through
 to hosts on `allow_hosts`: an entry is an exact name, `*.suffix` for anything
 under a domain, or `*`. Everything else gets `403 Forbidden` and a line in
-`<log_dir>/<name>-<pid>-<dir>.log` (`log_dir` defaults to `/tmp/box`), where
+`<log_dir>/<binary>-<pid>-<dir>.log` (`log_dir` defaults to `/tmp/box`), where
 `<dir>` is the working directory without its leading slash and with the other
 slashes replaced by dashes. `box info` shows the log directory in use,
 `box top` shows the denied requests of the running sandboxes grouped by
@@ -322,7 +323,7 @@ from inside its sandbox. `box` then:
   `$XDG_RUNTIME_DIR/libpod/tmp/pause.pid`, which podman joins on every
   invocation;
 - mounts `/sys` read-only, which the OCI runtime bind-mounts into containers;
-- binds `~/.local/state/box/podman/<name>` read-write at the same path:
+- binds `~/.local/state/box/podman/<binary>` read-write at the same path:
   it holds the per-binary image store (`storage/`) and, written before
   each run, a `containers.conf` and `storage.conf` pointed at by
   `CONTAINERS_CONF_OVERRIDE` and `CONTAINERS_STORAGE_CONF` (an entry in
@@ -439,9 +440,10 @@ relevant paths added to `rw_binds`. Claude Code's section additionally exposes
 (a Mach service, an IOKit class) can be granted with `seatbelt_rules`, for
 example `'(allow mach-lookup (global-name "com.apple.pasteboard.1"))'`.
 
-Inside a macOS sandbox `BOX_NAME` and `BOX_DIR` are set to the binary's name
-and the working directory; `box ps` finds sandboxes by these, since
-`sandbox-exec` leaves no wrapper process behind.
+Inside a macOS sandbox `BOX_NAME`, `BOX_BINARY` and `BOX_DIR` are set to the
+sandbox's name, the binary's base name and the working directory; `box ps`
+finds sandboxes by these, since `sandbox-exec` leaves no wrapper process
+behind.
 
 `sandbox-exec` is marked deprecated by Apple but ships with every macOS
 release and is what other agent sandboxes build on.
@@ -536,6 +538,13 @@ the same build in CI and attaches the artifacts to a GitHub release.
   proxy enabled it first forks the proxy process, which is told to die with
   it (`bwrap` inherits that role); inside the sandbox the command runs as a
   child of the forwarder, which passes signals and the exit status through.
+- Every sandbox has a name, shown in the `NAME` column of `box ps`: the last
+  component of the working directory it was started in (`box` for
+  `~/dev/box`), with `-2`, `-3`, ... appended while a running sandbox
+  already has that name, so two sandboxes started in the same directory
+  are `box` and `box-2`. In the root directory the binary's base name is
+  used instead. State on the host (overlay layers, podman store, private
+  `/tmp`, logs) stays keyed by the binary.
 - `box` sets bwrap's `argv[0]` to `box:<name>`, which is how `box ps` finds
   its sandboxes; stats cover the whole process tree under that bwrap.
 - `box top` is `box ps` as a full-screen view that refreshes every second
@@ -544,7 +553,7 @@ the same build in CI and attaches the artifacts to a GitHub release.
   is one busy core; a sandbox seen for the first time shows its lifetime
   average. Sort with `c` (CPU), `m` (memory), `p` (processes), `t` (uptime)
   or `n` (name), `r` reverses, `q` quits. A name argument limits the view to
-  one binary, as with `box ps`.
+  one sandbox, or to the sandboxes running that binary, as with `box ps`.
 - `box df` shows, per binary, how much disk its sandboxes take on the host:
   the persistent overlay layers, the podman image store, the private `/tmp`
   directories (of running and exited sandboxes alike) and the proxy logs,
@@ -600,7 +609,7 @@ the same build in CI and attaches the artifacts to a GitHub release.
   while the sandbox ran). Since the original is writable from inside the
   sandbox, list only files the program may legitimately change.
 - With `private_tmp` (the Linux default) each sandbox gets a fresh host
-  directory `/tmp/box/<name>-<pid>` mounted as `/tmp`, where `<pid>` is the
+  directory `/tmp/box/<binary>-<pid>` mounted as `/tmp`, where `<pid>` is the
   PID `box ps` shows. Nothing other host processes put in `/tmp` (X11
   sockets, for example) is exposed, while the sandbox's temporary files stay
   inspectable from the host. Because `box` execs into `bwrap` nothing removes

@@ -1049,3 +1049,16 @@ func TestBuildRWParent(t *testing.T) {
 		t.Errorf("want a warning about the root directory, got %v", plan.Warnings)
 	}
 }
+
+func TestDefaultName(t *testing.T) {
+	for _, tc := range []struct{ cwd, binary, want string }{
+		{"/home/u/dev/box", "/usr/bin/claude", "box"},
+		{"/home/u/dev/box/", "claude", "box"},
+		{"/", "claude", "claude"},
+		{"", "/usr/bin/claude", "claude"},
+	} {
+		if got := DefaultName(tc.cwd, tc.binary); got != tc.want {
+			t.Errorf("DefaultName(%q, %q) = %q, want %q", tc.cwd, tc.binary, got, tc.want)
+		}
+	}
+}

@@ -256,8 +256,8 @@ func TestTopDeniedPane(t *testing.T) {
 	s := newTopState(time.Second, "", []string{dir})
 	s.totalMem = 0
 	s.update([]procs.Sandbox{
-		{PID: 1001, Name: "claude", Started: now.Add(-time.Minute)},
-		{PID: 1002, Name: "sh", Started: now.Add(-time.Minute)},
+		{PID: 1001, Name: "claude", Binary: "claude", Started: now.Add(-time.Minute)},
+		{PID: 1002, Name: "sh", Binary: "sh", Started: now.Add(-time.Minute)},
 	}, nil, now)
 	s.updateDenied()
 	lines, headers := s.lines(100, 12)
@@ -300,7 +300,7 @@ func TestTopDeniedPane(t *testing.T) {
 	if rows := s.denied.rows(); len(rows) != 3 || rows[0].target != "new.example" || rows[0].count != 3 || rows[1].target != "telemetry.example" {
 		t.Errorf("after append: %+v", rows)
 	}
-	s.update([]procs.Sandbox{{PID: 1001, Name: "claude", Started: now.Add(-time.Minute)}}, nil, now)
+	s.update([]procs.Sandbox{{PID: 1001, Name: "claude", Binary: "claude", Started: now.Add(-time.Minute)}}, nil, now)
 	s.updateDenied()
 	rows := s.denied.rows()
 	if len(rows) != 2 || rows[0].count != 2 || rows[0].sandboxNames() != "claude" || s.denied.total() != 3 {
@@ -408,8 +408,9 @@ func TestDeniedFiles(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "claude-1001-dir.log"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	files := deniedFiles([]string{dir, filepath.Join(dir, "missing")}, []procs.Sandbox{{PID: 1001, Name: "claude"}})
-	if len(files) != 1 || files[filepath.Join(dir, "claude-1001-home-deric-dev-box.log")] != "claude" {
+	// Logs are matched by binary and PID and labeled with the sandbox name.
+	files := deniedFiles([]string{dir, filepath.Join(dir, "missing")}, []procs.Sandbox{{PID: 1001, Name: "box", Binary: "claude"}})
+	if len(files) != 1 || files[filepath.Join(dir, "claude-1001-home-deric-dev-box.log")] != "box" {
 		t.Errorf("files = %v", files)
 	}
 }
