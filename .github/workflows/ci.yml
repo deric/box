@@ -51,7 +51,8 @@ jobs:
           ./box run sleep 10 &
           sleep 2
           ./box ps | tee ps.out
-          awk '$2 == "sleep" { found = 1 } END { exit !found }' ps.out
+          # Named after the working directory, running sleep.
+          awk -v name="$(basename "$PWD")" '$2 == name && $8 == "sleep" { found = 1 } END { exit !found }' ps.out
           wait
 
   # Linux distributions in containers on the Ubuntu runner: Fedora, a RHEL 10
@@ -142,7 +143,8 @@ jobs:
           box run sleep 10 &
           sleep 2
           box ps | tee ps.out
-          awk '$2 == "sleep" { found = 1 } END { exit !found }' ps.out
+          # Named after the working directory, running sleep.
+          awk -v name="$(basename "$PWD")" '$2 == name && $8 == "sleep" { found = 1 } END { exit !found }' ps.out
           wait
           EOF
           runuser -u ci -- env HOME=/home/ci PATH="$PWD:$PATH" sh /tmp/smoke.sh
