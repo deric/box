@@ -44,7 +44,7 @@ box doctor                      # check the host for everything box needs and sa
 | `/proc`, `/dev`                  | fresh, minimal                                       |
 | PID, IPC, UTS, cgroup namespaces | unshared; hostname is `box`                          |
 | user namespaces                  | cannot be created inside (`--disable-userns`)        |
-| terminal                         | new session (`--new-session`)                        |
+| terminal                         | a pseudo-terminal of its own, relayed to the host's (see [Terminal](#terminal)); without one, a new session (`--new-session`) |
 | CPU, memory                      | 1 core and 2 GiB, no swap: a transient systemd scope (cgroup) of its own, see [Resource limits](#resource-limits) |
 | environment                      | cleared; only `pass_env` variables (`HOME`, `PATH`, `TERM`, `LANG`, `LC_*`, proxies, ...) and `BOX_SANDBOX=1` are set |
 
@@ -157,6 +157,24 @@ of that and attaches pasta to a throwaway namespace; where something is
 missing the sandbox falls back to the proxy with a warning. `box show`
 prints the `box _netns -pasta` step that prepares the namespace.
 
+### Terminal
+
+When `box run` is started on a terminal, the sandbox gets a pseudo-terminal
+of its own and `box` stays on the host relaying the two: keystrokes go in
+unchanged, output comes back, and whenever the terminal is resized the new
+size is passed on, so programs inside (Claude Code, editors, pagers) get
+`SIGWINCH` and redraw. The sandbox runs as the leader of a new session with
+that pseudo-terminal as its controlling terminal, which also means `^C`
+reaches the program as `SIGINT`, `/dev/tty` can be opened, and a shell
+inside has job control (`fg`, `bg`, `^Z`). `--new-session` is not passed
+in that case: `TIOCSTI` on the sandbox's terminal only types into the
+sandbox itself. `^Z` typed while no shell inside does job control suspends
+`box` as a whole, and `fg` resumes it. The relay works the same on macOS.
+
+Without a terminal (stdin or stdout redirected) or with `box run -T`, the
+command runs on the host's descriptors as before, under `--new-session`
+when the profile says so. `box` exits with the command's status either way.
+
 ## Configuration
 
 `box init` writes a commented default file and creates the `profile.d/`
@@ -242,7 +260,7 @@ with `?` to skip silently.
 | `allow_hosts`     | list              | hosts the proxy lets through: `name`, `*.suffix` or `*`        |
 | `log_dir`         | string            | directory for the proxy's denied-request logs (default `/tmp/box`) |
 | `hostname`        | string            | hostname inside the sandbox; empty keeps the host's            |
-| `new_session`     | bool              | `--new-session` (blocks TIOCSTI, breaks shell job control)     |
+| `new_session`     | bool              | `--new-session` when `box run` is not on a terminal (blocks TIOCSTI, breaks shell job control); on one the sandbox has a terminal of its own, see [Terminal](#terminal) |
 | `disable_userns`  | bool              | `--disable-userns`: no user namespaces inside, so no nested sandboxes |
 | `die_with_parent` | bool              | kill the sandbox when `box` dies                               |
 | `clear_env`       | bool              | start from an empty environment                                |
@@ -534,10 +552,13 @@ the same build in CI and attaches the artifacts to a GitHub release.
 ## Notes
 
 - `box` replaces itself with `bwrap` (or `sandbox-exec`) via `exec`, so
-  signals and the terminal behave as if the program ran directly. With the
-  proxy enabled it first forks the proxy process, which is told to die with
-  it (`bwrap` inherits that role); inside the sandbox the command runs as a
-  child of the forwarder, which passes signals and the exit status through.
+  signals and the terminal behave as if the program ran directly. On a
+  terminal it first starts a copy of itself on a pseudo-terminal, which is
+  the one that does so, and stays to relay the terminal and pass the exit
+  status on (see [Terminal](#terminal)). With the proxy enabled it forks the
+  proxy process before the `exec`, which is told to die with it (`bwrap`
+  inherits that role); inside the sandbox the command runs as a child of
+  the forwarder, which passes signals and the exit status through.
 - Every sandbox has a name, shown in the `NAME` column of `box ps`: the last
   component of the working directory it was started in (`box` for
   `~/dev/box`), with `-2`, `-3`, ... appended while a running sandbox
@@ -570,7 +591,8 @@ the same build in CI and attaches the artifacts to a GitHub release.
   and Claude Code's own bwrap-based bash sandbox cannot start; set it to
   `false` in that binary's section if you rely on them. `new_session`
   detaches from the controlling terminal's session, so interactive shells
-  inside lose job control.
+  inside lose job control; it only applies without a terminal of the
+  sandbox's own (see [Terminal](#terminal)).
 - `copy_files` opens each file before `exec` and hands the descriptor to
   `bwrap`, which writes a copy at the same path with the host file's mode
   (`box show` prints the matching `N<file` redirection). `sync_files` does
