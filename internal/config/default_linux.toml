@@ -129,7 +129,7 @@ allow_hosts = [
   "pkgs.org", "production.cloudflare.docker.com",
   "quay.io", "*.quay.io", "ghcr.io",
   "registry.fedoraproject.org", "registry.access.redhat.com", "repology.org",
-  "www.securityfocus.com",
+  "www.securityfocus.com", "*.sigstore.dev", "sigstore.dev"
 ]
 
 # Hostname inside the sandbox (empty keeps the host name).
