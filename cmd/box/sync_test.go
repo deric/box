@@ -35,19 +35,19 @@ func conflictFixture(t *testing.T) (sandbox.Conflict, string, string) {
 func TestResolveConflictsOverwrite(t *testing.T) {
 	c, host, saveDir := conflictFixture(t)
 	var out bytes.Buffer
-	resolveConflicts([]sandbox.Conflict{c}, true, strings.NewReader("what\no\n"), &out, saveDir, "/host/saved")
+	resolveConflicts([]sandbox.Conflict{c}, true, strings.NewReader("what\ny\n"), &out, saveDir, "/host/saved")
 	got := out.String()
 	for _, want := range []string{
 		"box: /home/u/.claude.json changed on the host while the sandbox ran",
 		"--- /home/u/.claude.json (host)\n+++ /home/u/.claude.json (sandbox)\n",
 		"-  \"host\": true\n+  \"sandbox\": true\n",
-		"[o/K] ",
+		"[y/N] ",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	if strings.Count(got, "[o/K] ") != 2 {
+	if strings.Count(got, "[y/N] ") != 2 {
 		t.Errorf("an unknown answer should repeat the question:\n%s", got)
 	}
 	if data, _ := os.ReadFile(host); string(data) != string(c.Copy) {
@@ -59,7 +59,7 @@ func TestResolveConflictsOverwrite(t *testing.T) {
 }
 
 func TestResolveConflictsKeep(t *testing.T) {
-	for _, answer := range []string{"k\n", "\n", "merge\n", ""} {
+	for _, answer := range []string{"n\n", "k\n", "\n", "merge\n", ""} {
 		c, host, saveDir := conflictFixture(t)
 		var out bytes.Buffer
 		resolveConflicts([]sandbox.Conflict{c}, true, strings.NewReader(answer), &out, saveDir, "/host/saved")
@@ -83,8 +83,8 @@ func TestResolveConflictsKeep(t *testing.T) {
 func TestResolveConflictsNoTerminal(t *testing.T) {
 	c, host, saveDir := conflictFixture(t)
 	var out bytes.Buffer
-	resolveConflicts([]sandbox.Conflict{c}, false, strings.NewReader("o\n"), &out, saveDir, "/host/saved")
-	if strings.Contains(out.String(), "[o/K]") {
+	resolveConflicts([]sandbox.Conflict{c}, false, strings.NewReader("y\n"), &out, saveDir, "/host/saved")
+	if strings.Contains(out.String(), "[y/N]") {
 		t.Errorf("no question without a terminal:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), "no terminal to ask; keeping the host file") {

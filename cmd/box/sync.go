@@ -58,13 +58,13 @@ func say(out io.Writer, format string, args ...any) {
 // overwrite, false (the default, also on end of input) to keep and save.
 func askOverwrite(r *bufio.Reader, out io.Writer, path string) bool {
 	for {
-		say(out, "box: overwrite %s with the sandbox copy, or keep it and save the copy aside to merge by hand? [o/K] ", path)
+		say(out, "box: overwrite %s with the sandbox copy? No keeps it and saves the copy aside to merge by hand. [y/N] ", path)
 		line, err := r.ReadString('\n')
 		answer := strings.ToLower(strings.TrimSpace(line))
 		switch answer {
-		case "o", "overwrite":
+		case "y", "yes", "o", "overwrite":
 			return true
-		case "", "k", "keep", "m", "merge":
+		case "", "n", "no", "k", "keep", "m", "merge":
 			return false
 		}
 		if err != nil {
