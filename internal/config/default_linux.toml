@@ -121,6 +121,8 @@ allow_hosts = [
   "icinga.com", "index.rubygems.org",
   "orca.security", "openwall.com",
   "hub.docker.io",
+  "kernel.org", "*.kernel.org",
+  "mise-versions.jdx.dev", "mise.jdx.dev",
   "nginx.org","nvd.nist.gov",
   "registry.npmjs.org", "rubygems.org", "registry.dagger.io",
   "storage.googleapis.com",
