@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -29,8 +30,15 @@ const (
 	systemdPath    = dbus.ObjectPath("/org/freedesktop/systemd1")
 	systemdManager = "org.freedesktop.systemd1.Manager"
 	cgroupRoot     = "/sys/fs/cgroup"
-	scopeTimeout   = 10 * time.Second
 )
+
+// scopeTimeout bounds the whole exchange with the manager: connecting,
+// authenticating, the method calls and the wait for the scope to start.
+// The manager has been seen to leave a call on its private socket
+// unanswered for good while serving other connections, and box must not
+// hang on that; the sandbox then runs without limits, with a warning.
+// Tests shorten it.
+var scopeTimeout = 10 * time.Second
 
 // property is a systemd unit property as StartTransientUnit takes it.
 type property struct {
@@ -48,12 +56,14 @@ type auxUnit struct {
 // with limits l and returns warnings about limits the kernel does not
 // confirm. An error means no scope was created.
 func applyLimits(unit, name string, l Limits) ([]string, error) {
-	conn, bus, err := connectUserManager()
+	ctx, cancel := context.WithTimeout(context.Background(), scopeTimeout)
+	defer cancel()
+	conn, bus, err := connectUserManager(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
-	if err := startScope(conn, bus, unit, scopeProperties(name, l)); err != nil {
+	if err := startScope(ctx, conn, bus, unit, scopeProperties(name, l)); err != nil {
 		return nil, err
 	}
 	own, err := ownCgroup("/proc/self/cgroup")
@@ -68,8 +78,10 @@ func applyLimits(unit, name string, l Limits) ([]string, error) {
 
 // connectUserManager connects to the systemd user manager: through its
 // private socket under $XDG_RUNTIME_DIR, which needs no bus daemon, or
-// else through the session bus. The returned bool reports the latter.
-func connectUserManager() (*dbus.Conn, bool, error) {
+// else through the session bus. The returned bool reports the latter. The
+// connection is tied to ctx: when that ends, so does the connection, and
+// with it anything blocked on it, authentication included.
+func connectUserManager(ctx context.Context) (*dbus.Conn, bool, error) {
 	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
 	if runtimeDir == "" {
 		runtimeDir = "/run/user/" + strconv.Itoa(os.Getuid())
@@ -77,14 +89,14 @@ func connectUserManager() (*dbus.Conn, bool, error) {
 	var errs []error
 	private := filepath.Join(runtimeDir, "systemd", "private")
 	if _, err := os.Stat(private); err == nil {
-		conn, err := dbus.Dial("unix:path=" + private)
+		conn, err := dbus.Dial("unix:path="+private, dbus.WithContext(ctx))
 		if err == nil {
 			if err = conn.Auth([]dbus.Auth{dbus.AuthExternal(strconv.Itoa(os.Getuid()))}); err == nil {
 				return conn, false, nil
 			}
 			_ = conn.Close()
 		}
-		errs = append(errs, fmt.Errorf("%s: %w", private, err))
+		errs = append(errs, expired(ctx, private, err))
 	} else {
 		errs = append(errs, err)
 	}
@@ -92,9 +104,9 @@ func connectUserManager() (*dbus.Conn, bool, error) {
 	if addr == "" {
 		addr = "unix:path=" + filepath.Join(runtimeDir, "bus")
 	}
-	conn, err := dbus.Connect(addr)
+	conn, err := dbus.Connect(addr, dbus.WithContext(ctx))
 	if err != nil {
-		errs = append(errs, fmt.Errorf("session bus %s: %w", addr, err))
+		errs = append(errs, expired(ctx, "session bus "+addr, err))
 		msgs := make([]string, len(errs))
 		for i, e := range errs {
 			msgs[i] = e.Error()
@@ -102,6 +114,16 @@ func connectUserManager() (*dbus.Conn, bool, error) {
 		return nil, false, fmt.Errorf("systemd user manager unreachable: %s", strings.Join(msgs, "; "))
 	}
 	return conn, true, nil
+}
+
+// expired describes err as a failure of what; once ctx has run out it
+// says so instead, as the error a connection torn down by its context
+// yields (a closed socket) does not.
+func expired(ctx context.Context, what string, err error) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("%s: no answer from the systemd user manager within %s", what, scopeTimeout)
+	}
+	return fmt.Errorf("%s: %w", what, err)
 }
 
 // scopeProperties returns the properties of the scope for the current
@@ -127,35 +149,35 @@ func scopeProperties(name string, l Limits) []property {
 }
 
 // startScope asks the manager for the transient scope and waits for its
-// start job to finish, which is when the PID has been moved. Job signals
-// are only sent to subscribers; a bus connection must also match them,
-// while the private connection receives every signal.
-func startScope(conn *dbus.Conn, bus bool, unit string, props []property) error {
+// start job to finish, which is when the PID has been moved. A bus
+// connection receives job signals only once it matches them and
+// subscribes; the private connection gets every signal of the manager as
+// it is, so nothing is asked of it first. Every wait ends with ctx.
+func startScope(ctx context.Context, conn *dbus.Conn, bus bool, unit string, props []property) error {
 	sigs := make(chan *dbus.Signal, 64)
 	conn.Signal(sigs)
 	defer conn.RemoveSignal(sigs)
-	if bus {
-		if err := conn.AddMatchSignal(dbus.WithMatchInterface(systemdManager), dbus.WithMatchMember("JobRemoved")); err != nil {
-			return fmt.Errorf("matching job signals: %w", err)
-		}
-	}
 	mgr := conn.Object(systemdDest, systemdPath)
-	if err := mgr.Call(systemdManager+".Subscribe", 0).Err; err != nil {
-		var dbusErr dbus.Error
-		if !errors.As(err, &dbusErr) || dbusErr.Name != "org.freedesktop.systemd1.AlreadySubscribed" {
-			return fmt.Errorf("subscribing to job signals: %w", err)
+	if bus {
+		if err := conn.AddMatchSignalContext(ctx, dbus.WithMatchInterface(systemdManager), dbus.WithMatchMember("JobRemoved")); err != nil {
+			return expired(ctx, "matching job signals", err)
+		}
+		if err := mgr.CallWithContext(ctx, systemdManager+".Subscribe", 0).Err; err != nil {
+			var dbusErr dbus.Error
+			if !errors.As(err, &dbusErr) || dbusErr.Name != "org.freedesktop.systemd1.AlreadySubscribed" {
+				return expired(ctx, "subscribing to job signals", err)
+			}
 		}
 	}
 	var job dbus.ObjectPath
-	if err := mgr.Call(systemdManager+".StartTransientUnit", 0, unit, "fail", props, []auxUnit{}).Store(&job); err != nil {
-		return fmt.Errorf("starting scope %s: %w", unit, err)
+	if err := mgr.CallWithContext(ctx, systemdManager+".StartTransientUnit", 0, unit, "fail", props, []auxUnit{}).Store(&job); err != nil {
+		return expired(ctx, "starting scope "+unit, err)
 	}
-	timeout := time.After(scopeTimeout)
 	for {
 		select {
 		case s, ok := <-sigs:
 			if !ok {
-				return fmt.Errorf("connection closed while scope %s was starting", unit)
+				return expired(ctx, "starting scope "+unit, errors.New("connection closed while the scope was starting"))
 			}
 			if s.Name != systemdManager+".JobRemoved" || len(s.Body) < 4 {
 				continue
@@ -167,8 +189,8 @@ func startScope(conn *dbus.Conn, bus bool, unit string, props []property) error 
 				return fmt.Errorf("starting scope %s: job %s", unit, result)
 			}
 			return nil
-		case <-timeout:
-			return fmt.Errorf("starting scope %s: no reply within %s", unit, scopeTimeout)
+		case <-ctx.Done():
+			return fmt.Errorf("starting scope %s: not started within %s", unit, scopeTimeout)
 		}
 	}
 }
@@ -237,14 +259,16 @@ func sameLimit(got, want string) bool {
 // user manager, sorted, or an error when the manager is unreachable or the
 // delegation cannot be read.
 func LimitsStatus() ([]string, error) {
-	conn, _, err := connectUserManager()
+	ctx, cancel := context.WithTimeout(context.Background(), scopeTimeout)
+	defer cancel()
+	conn, _, err := connectUserManager(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
-	v, err := conn.Object(systemdDest, systemdPath).GetProperty(systemdManager + ".ControlGroup")
-	if err != nil {
-		return nil, fmt.Errorf("reading the manager's cgroup: %w", err)
+	var v dbus.Variant
+	if err := conn.Object(systemdDest, systemdPath).CallWithContext(ctx, "org.freedesktop.DBus.Properties.Get", 0, systemdManager, "ControlGroup").Store(&v); err != nil {
+		return nil, expired(ctx, "reading the manager's cgroup", err)
 	}
 	cg, _ := v.Value().(string)
 	b, err := os.ReadFile(filepath.Join(cgroupRoot, cg, "cgroup.subtree_control"))

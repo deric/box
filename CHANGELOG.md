@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `box run` could hang forever before starting the sandbox, invisible to
+  `box ps`, when the systemd user manager left a request on its private
+  socket unanswered while serving every other connection. The exchange
+  that creates the sandbox's scope (connecting, authenticating, the method
+  calls and the wait for the scope) is now bounded by one ten second
+  deadline, after which `box` warns that resource limits were not applied
+  and runs the sandbox without them. The private connection no longer
+  sends a `Subscribe` call, which the manager does not need from it.
+
 ## [0.6.0] - 2026-10-19
 
 ### Added
@@ -265,4 +278,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Packaging with nfpm and a Dagger-based release pipeline.
 
 [0.1.1]: https://github.com/deric/box/releases/tag/v0.1.1
-[Unreleased]: https://github.com/deric/box/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/deric/box/compare/v0.6.0...HEAD

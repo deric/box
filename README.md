@@ -70,7 +70,8 @@ stretch it: a sandbox that outgrows it is OOM-killed instead. Once the
 scope exists `box` reads the limits back from cgroupfs and warns about any
 the kernel does not show, which happens when a controller is not delegated
 to the user manager. Without a reachable user manager (no systemd, no
-session, nested `box`) it warns and runs without limits.
+session, nested `box`), or with one that does not answer within ten
+seconds, it warns and runs without limits.
 
 `tmpfs_size` is passed as `bwrap --size` before every `--tmpfs`, so
 `$HOME` and `/var/tmp` (and podman's runtime directory) each hold at most
