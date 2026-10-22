@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.1] - 2026-10-22
 
 ### Fixed
 
@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deadline, after which `box` warns that resource limits were not applied
   and runs the sandbox without them. The private connection no longer
   sends a `Subscribe` call, which the manager does not need from it.
+
+[Full changelog]: https://github.com/deric/box/compare/v0.6.0...v0.6.1
 
 ## [0.6.0] - 2026-10-19
 
@@ -81,6 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a profile for `bwrap` only). It now prints a drop-in profile for
   `/usr/bin/unshare` to install instead, with the sysctl as the alternative.
 
+[Full changelog]: https://github.com/deric/box/compare/v0.5.0...v0.6.0
+
 ## [0.5.0] - 2026-10-17
 
 ### Added
@@ -111,6 +115,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rw_parent = true` also mounts the parent of the working directory
   read-write, for checkouts that build against their siblings. It is
   ignored with a warning when that parent is `/` or the home directory.
+
+[Full changelog]: https://github.com/deric/box/compare/v0.4.0...v0.5.0
 
 ## [0.4.0] - 2026-10-16
 
