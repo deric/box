@@ -36,7 +36,7 @@ box doctor                      # check the host for everything box needs and sa
 | `/tmp`                           | private: a fresh host dir `/tmp/box/<binary>-<pid>`  |
 | `/var/tmp`                       | empty tmpfs, 1 GiB at most                           |
 | `$HOME`                          | empty tmpfs, 1 GiB at most; only listed paths underneath are visible |
-| `~/.local/share/mise`, `~/.local/bin` | overlay: host content visible, writes land in a per-binary upper layer under `~/.local/state/box/overlays/` |
+| `~/.local/share/mise`, `~/.local/state/mise`, `~/.local/bin` | overlay: host content visible, writes land in a per-binary upper layer under `~/.local/state/box/overlays/`; the state dir carries mise's `trusted-configs/`, so configs trusted on the host are trusted inside and `mise trust` inside never trusts anything on the host |
 | `~/.claude` (claude only)        | temporary overlay: host content visible, writes discarded on exit; `projects/` and `.credentials.json` read-write |
 | `~/.claude/skills`, `~/.claude/plugins`, `~/.agents/skills` (claude only) | persistent overlays: the host's skills and plugins are visible, ones installed inside land in the per-binary upper layer |
 | `~/.claude.json` (claude only)   | private copy of the host file                        |
@@ -192,7 +192,11 @@ ro_binds = ["/bin", "/sbin", "/lib", "?/lib32", "/lib64", "/usr", "/etc", "?/opt
 rw_binds = ["$PWD"]
 tmpfs    = ["$HOME", "/var/tmp"]
 private_tmp = true
-overlays = [{ path = "~/.local/share/mise", persist = true }, { path = "?~/.local/bin", persist = true }]
+overlays = [
+  { path = "~/.local/share/mise", persist = true },
+  { path = "?~/.local/state/mise", persist = true },
+  { path = "?~/.local/bin", persist = true },
+]
 network  = false
 proxy    = true
 dns      = true

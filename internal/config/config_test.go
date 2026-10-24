@@ -28,8 +28,9 @@ func TestDefaultTOMLParses(t *testing.T) {
 			t.Errorf("pass_env = %v, missing %q", p.PassEnv, want)
 		}
 	}
-	if len(p.Overlays) != 2 || p.Overlays[0].Path != "~/.local/share/mise" || !p.Overlays[0].Persist ||
-		p.Overlays[1].Path != "?~/.local/bin" || !p.Overlays[1].Persist {
+	if len(p.Overlays) != 3 || p.Overlays[0].Path != "~/.local/share/mise" || !p.Overlays[0].Persist ||
+		p.Overlays[1].Path != "?~/.local/state/mise" || !p.Overlays[1].Persist ||
+		p.Overlays[2].Path != "?~/.local/bin" || !p.Overlays[2].Persist {
 		t.Errorf("unexpected default overlays: %+v", p.Overlays)
 	}
 	if p.LogDir != DefaultLogDir {
@@ -150,15 +151,15 @@ func TestDefaultTOMLClaude(t *testing.T) {
 	if contains(p.RWBinds, "?~/.claude") || contains(p.RWBinds, "?~/.claude.json") {
 		t.Errorf("~/.claude must be an overlay and ~/.claude.json a synced copy, not rw_binds %v", p.RWBinds)
 	}
-	if len(p.Overlays) != 6 || p.Overlays[2].Path != "?~/.claude" || p.Overlays[2].Persist {
+	if len(p.Overlays) != 7 || p.Overlays[3].Path != "?~/.claude" || p.Overlays[3].Persist {
 		t.Errorf("want a temporary ~/.claude overlay after the default ones, got %+v", p.Overlays)
 	}
 	for i, want := range []string{"?~/.claude/skills", "?~/.claude/plugins", "?~/.agents/skills"} {
-		if len(p.Overlays) <= 3+i {
+		if len(p.Overlays) <= 4+i {
 			break
 		}
-		if o := p.Overlays[3+i]; o.Path != want || !o.Persist {
-			t.Errorf("overlays[%d] = %+v, want persistent %s", 3+i, o, want)
+		if o := p.Overlays[4+i]; o.Path != want || !o.Persist {
+			t.Errorf("overlays[%d] = %+v, want persistent %s", 4+i, o, want)
 		}
 	}
 	if contains(p.RWBinds, "?~/.claude/skills") || contains(p.ROBinds, "?~/.claude/skills") {

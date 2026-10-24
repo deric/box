@@ -60,8 +60,15 @@ private_tmp = true
 # upper layer and never touch the host. With persist = true the upper layer is
 # kept per binary under ~/.local/state/box/overlays (see `box clean`); with
 # persist = false it is discarded when the sandbox exits.
+#
+# ~/.local/state/mise holds mise's record of which config files are trusted
+# (trusted-configs/). Without it every mise.toml is untrusted inside the
+# sandbox and the shims on PATH (python3, go, ...) refuse to run; with it the
+# host's trust decisions apply inside, while `mise trust` run inside lands in
+# the per-binary layer and never trusts anything on the host.
 overlays = [
   { path = "~/.local/share/mise", persist = true },
+  { path = "?~/.local/state/mise", persist = true },
   { path = "?~/.local/bin", persist = true },
 ]
 
