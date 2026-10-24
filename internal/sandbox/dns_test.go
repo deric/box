@@ -2,7 +2,6 @@ package sandbox
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,9 +81,8 @@ func TestBuildDNS(t *testing.T) {
 		t.Errorf("resolv.conf = %q, want %q", plan.Data[dataFD], wantConf)
 	}
 	// The runner reads the content from the descriptor, up to EOF.
-	got, err := io.ReadAll(os.NewFile(uintptr(dataFD), "resolv.conf"))
-	if err != nil || string(got) != wantConf {
-		t.Errorf("fd %d holds %q, %v", dataFD, got, err)
+	if got := readFD(t, dataFD); got != wantConf {
+		t.Errorf("fd %d holds %q", dataFD, got)
 	}
 	udp, tcp := strconv.Itoa(plan.DNS.UDPFD), strconv.Itoa(plan.DNS.TCPFD)
 	cmd := " " + strings.Join(plan.Args, " ") + " "

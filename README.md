@@ -520,7 +520,10 @@ and a release could stop accepting them.
 Inside a macOS sandbox `BOX_NAME`, `BOX_BINARY` and `BOX_DIR` are set to the
 sandbox's name, the binary's base name and the working directory; `box ps`
 finds sandboxes by these, since `sandbox-exec` leaves no wrapper process
-behind.
+behind. Since macOS 15.7 the kernel hides the environment of Apple's own
+(platform) binaries from unprivileged readers, so a sandbox whose program
+is one of them, such as `/bin/zsh`, is not listed; programs from Homebrew,
+mise or a project are.
 
 `sandbox-exec` is marked deprecated by Apple but ships with every macOS
 release and is what other agent sandboxes build on.

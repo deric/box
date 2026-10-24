@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tests: the macOS process listing test spawned `/bin/sleep`, whose
+  environment macOS 15.7 no longer exposes to unprivileged readers (it is a
+  platform binary), so it failed on current hosts; it now spawns the test
+  binary. The ssh and DNS tests closed generated data descriptors twice,
+  once through a leaked `*os.File` finalizer, which could close a
+  descriptor another test had since been given (a `TempDir` cleanup on CI
+  failed with `bad file descriptor`).
 - mise shims on `PATH` (`python3`, `go`, ...) refused to run inside the
   sandbox because every `mise.toml` was untrusted there: mise records trust
   as symlinks under `~/.local/state/mise/trusted-configs/`, which the tmpfs

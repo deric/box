@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/deric/box/internal/config"
@@ -49,6 +50,25 @@ func sshFixture(t *testing.T) (home, cwd, bin, self, keyLink, keyReal, hostConf 
 	return home, cwd, bin, self, keyLink, keyReal, hostConf
 }
 
+// readFD drains fd, as the runner does, without taking ownership of it: an
+// *os.File made from the number itself would close it again from a
+// finalizer, long after the test released it, hitting whatever descriptor
+// has been given that number since (such as a TempDir cleanup's directory).
+func readFD(t *testing.T, fd int) string {
+	t.Helper()
+	dup, err := syscall.Dup(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := os.NewFile(uintptr(dup), "data")
+	defer func() { _ = f.Close() }()
+	got, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(got)
+}
+
 func dataMounts(t *testing.T, plan *Plan) (fd int, content string) {
 	t.Helper()
 	if len(plan.Data) != 1 {
@@ -56,9 +76,8 @@ func dataMounts(t *testing.T, plan *Plan) (fd int, content string) {
 	}
 	for fd, content = range plan.Data {
 	}
-	got, err := io.ReadAll(os.NewFile(uintptr(fd), "data"))
-	if err != nil || string(got) != content {
-		t.Errorf("fd %d holds %q, %v; want %q", fd, got, err, content)
+	if got := readFD(t, fd); got != content {
+		t.Errorf("fd %d holds %q; want %q", fd, got, content)
 	}
 	return fd, content
 }
