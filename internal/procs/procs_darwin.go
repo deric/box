@@ -29,6 +29,14 @@ func Sandboxes() ([]Sandbox, error) {
 	return group(all, envTag(sandbox.NameEnv, sandbox.BinaryEnv, sandbox.DirEnv)), nil
 }
 
-// IsRunning reports whether pid is a live box sandbox of the given binary. Only
-// Linux sandboxes own private /tmp directories, so nothing is running here.
-func IsRunning(int, string) bool { return false }
+// IsRunning reports whether pid is a live box sandbox of the given binary,
+// recognized by the environment box sets, as in Sandboxes.
+func IsRunning(pid int, binary string) bool {
+	buf, err := unix.SysctlRaw("kern.procargs2", pid)
+	if err != nil {
+		return false
+	}
+	_, env := parseProcArgs(buf)
+	s, ok := envTag(sandbox.NameEnv, sandbox.BinaryEnv, sandbox.DirEnv)(&proc{env: env})
+	return ok && s.Binary == binary
+}

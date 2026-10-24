@@ -199,10 +199,13 @@ func TestDefaultTOMLDarwin(t *testing.T) {
 			t.Errorf("ro_binds = %v, missing %q", p.ROBinds, want)
 		}
 	}
-	for _, want := range []string{"$PWD", "?$TMPDIR", "?~/.claude"} {
+	for _, want := range []string{"$PWD", "?~/.claude"} {
 		if !contains(p.RWBinds, want) {
 			t.Errorf("rw_binds = %v, missing %q", p.RWBinds, want)
 		}
+	}
+	if contains(p.RWBinds, "/tmp") || contains(p.RWBinds, "?$TMPDIR") || !p.PrivateTmp {
+		t.Errorf("/tmp and $TMPDIR must come from private_tmp, not rw_binds %v", p.RWBinds)
 	}
 	if !contains(p.ROBinds, "?~/.agents/skills") {
 		t.Errorf("ro_binds = %v, missing ~/.agents/skills", p.ROBinds)

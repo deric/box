@@ -133,6 +133,74 @@ func TestBuildSeatbeltNoNetwork(t *testing.T) {
 	}
 }
 
+func TestBuildSeatbeltPrivateTmp(t *testing.T) {
+	root := realTempDir(t)
+	cwd := filepath.Join(root, "project")
+	hostTmp := filepath.Join(root, "T")
+	for _, d := range []string{cwd, hostTmp} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("TMPDIR", hostTmp+"/")
+	tmpRoot := filepath.Join(root, "box") // not created yet
+	plan, err := buildSeatbelt(config.Profile{RWBinds: []string{"$PWD", "/tmp", "$TMPDIR"}, PrivateTmp: true}, Options{
+		Binary: "tool", Cwd: cwd, Home: root, TmpRoot: tmpRoot, ID: "42",
+		Lookup: func(string) (string, error) { return filepath.Join(cwd, "tool"), nil },
+	}, "sandbox-exec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(tmpRoot, "tool-42")
+	if plan.TmpDir != private {
+		t.Errorf("TmpDir = %q, want %q", plan.TmpDir, private)
+	}
+	if !slices.Contains(plan.Env, "TMPDIR="+private+"/") {
+		t.Errorf("TMPDIR not set to the private directory: %q", plan.Env)
+	}
+	profile := plan.Args[1]
+	hide := func(p string) int {
+		return strings.LastIndex(profile, `(deny file-read* file-write* network-outbound (subpath "`+p+`"))`)
+	}
+	allowTmp := strings.LastIndex(profile, `(allow file-read* file-write* (subpath "/private/tmp"))`)
+	allowHostTmp := strings.LastIndex(profile, `(allow file-read* file-write* (subpath "`+hostTmp+`"))`)
+	if hide("/private/tmp") < allowTmp || hide(hostTmp) < allowHostTmp {
+		t.Errorf("/tmp and $TMPDIR must be hidden even when bound:\n%s", profile)
+	}
+	if !strings.Contains(profile, `(allow file-read* file-write* (subpath "`+private+`"))`) ||
+		strings.Index(profile, `(subpath "`+private+`")`) < hide(hostTmp) {
+		t.Errorf("the private directory must be writable after the hidden ones:\n%s", profile)
+	}
+	if len(plan.Warnings) != 0 {
+		t.Errorf("unexpected warnings %q", plan.Warnings)
+	}
+}
+
+func TestBuildSeatbeltPrivateTmpKeepsCwd(t *testing.T) {
+	root := realTempDir(t)
+	t.Setenv("TMPDIR", root)
+	plan, err := buildSeatbelt(config.Profile{RWBinds: []string{"$PWD"}, PrivateTmp: true}, Options{
+		Binary: "tool", Cwd: root, Home: root, TmpRoot: filepath.Join(root, "box"), ID: "1",
+		Lookup: func(string) (string, error) { return filepath.Join(root, "tool"), nil },
+	}, "sandbox-exec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plan.Args[1], `(deny file-read* file-write* network-outbound (subpath "`+root+`"))`) {
+		t.Errorf("a $TMPDIR that contains the working directory must not be hidden:\n%s", plan.Args[1])
+	}
+}
+
+func TestRealPathPrefix(t *testing.T) {
+	root := realTempDir(t)
+	if err := os.Symlink(root, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := realPathPrefix(filepath.Join(root, "link", "a", "b")), filepath.Join(root, "a", "b"); got != want {
+		t.Errorf("realPathPrefix = %q, want %q", got, want)
+	}
+}
+
 func TestPlanEnviron(t *testing.T) {
 	t.Setenv("BOX_TEST_KEEP", "1")
 	t.Setenv("BOX_TEST_DROP", "1")
@@ -184,12 +252,25 @@ cat ../secret 2> /dev/null && fail "file under the hidden \$HOME is readable"
 touch ../new 2> /dev/null && fail "hidden \$HOME is writable"
 touch /usr/bin/box-test 2> /dev/null && fail "/usr is writable"
 ls /Users > /dev/null 2>&1 && fail "/Users is listable"
+cat /tmp/box-test-shared 2> /dev/null && fail "the host's /tmp is readable"
+touch /tmp/box-test-new 2> /dev/null && fail "the host's /tmp is writable"
+echo tmp > "$TMPDIR/file" || fail "cannot write the private TMPDIR"
+case "$TMPDIR" in */box-test/sh-*) ;; *) fail "TMPDIR is $TMPDIR" ;; esac
 echo "ok $BOX_NAME $BOX_BINARY $BOX_SANDBOX"
 `
+	shared := "/tmp/box-test-shared"
+	if err := os.WriteFile(shared, []byte("shared\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(shared); _ = os.Remove("/tmp/box-test-new") })
 	plan, err := Build(cfg.Resolve("sh"), Options{
 		Binary: "/bin/sh", Args: []string{"-c", script}, Cwd: cwd, Home: home,
+		TmpRoot: filepath.Join(home, "box-test"),
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := makeTmpDir(plan.TmpDir); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(plan.Exe, plan.Args...)

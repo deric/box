@@ -128,6 +128,9 @@ func buildSeatbelt(prof config.Profile, opts Options, exe string) (*Plan, error)
 	if prof.ClearEnv {
 		plan.Env = append(plan.Env, passEnv(prof)...)
 	}
+	if _, set := prof.Env["TMPDIR"]; plan.TmpDir != "" && !set {
+		plan.Env = append(plan.Env, "TMPDIR="+plan.TmpDir+"/")
+	}
 	for _, k := range sortedKeys(prof.Env) {
 		plan.Env = append(plan.Env, k+"="+prof.Env[k])
 	}

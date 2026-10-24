@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- macOS: sandboxes could connect to every Unix socket under the shared
+  `/tmp` and `$TMPDIR`, among them the ssh-agent socket launchd creates
+  there and tmux's server socket, which runs commands outside the sandbox.
+  `private_tmp` now works with Seatbelt and is on in the macOS defaults:
+  each sandbox gets a fresh `/tmp/box/<binary>-<pid>` that `TMPDIR` points
+  at, while the host's `/tmp` and `$TMPDIR` are hidden, even when listed in
+  `rw_binds`. Existing configuration files do not pick this up: set
+  `private_tmp = true` and drop `/tmp` and `?$TMPDIR` from `rw_binds` in
+  `~/.config/box/box.toml` (`box init` prints the diff).
+
 ### Fixed
 
 - mise shims on `PATH` (`python3`, `go`, ...) refused to run inside the
