@@ -51,6 +51,11 @@ box doctor                      # check the host for everything box needs and sa
 Everything is driven by `--unshare-all`; `BOX_SANDBOX=1` lets programs detect
 they are sandboxed.
 
+Since the current directory is read-write, `box run` refuses to start in
+`/`, in `$HOME` or in a directory above `$HOME` (`/home`, `/Users`): the
+sandbox would otherwise have the whole host or the whole home directory.
+`box run -f` (`--force`) runs there anyway; `box show` is never refused.
+
 ### Resource limits
 
 Every sandbox runs in a cgroup of its own with a CPU and a memory limit
@@ -477,6 +482,45 @@ relevant paths added to `rw_binds`. Claude Code's section additionally exposes
 `~/Library/Keychains`, where its login is stored. Anything else a program needs
 (a Mach service, an IOKit class) can be granted with `seatbelt_rules`, for
 example `'(allow mach-lookup (global-name "com.apple.pasteboard.1"))'`.
+
+### Build caches on macOS
+
+Toolchains keep their caches under `$HOME`, which is hidden, so `go build`
+fails to open `~/Library/Caches/go-build` and golangci-lint cannot create
+`~/Library/Caches/golangci-lint`. Exposing the host's caches read-only is
+safe (the sandbox can read other projects' cached sources and test output,
+but change nothing the host trusts) and enough for `go build`, `go vet` and
+`go test`, which rebuild what they cannot store; it is not enough for
+golangci-lint, which refuses a cache it cannot write, nor for modules that
+still need downloading. Do not expose them read-write: Go trusts a build
+cache entry by its key alone, so a sandboxed program could plant an object
+the host's next build of the same package links, in any project that shares
+the dependency, with nothing to see in git. Give sandboxes a cache of their
+own on the host instead, one the host toolchain never reads, for example in
+a profile for the directory the projects live under:
+
+```toml
+# ~/.config/box/profile.d/dev.toml
+paths = ["~/dev"]
+
+[default]
+rw_binds = ["?~/.cache/box/go"]                 # mkdir -p it on the host first
+ro_binds = ["?~/go/pkg/mod/cache/download"]     # seed modules from the host, read-only
+env = {
+  GOCACHE = "/Users/me/.cache/box/go/build",
+  GOMODCACHE = "/Users/me/.cache/box/go/mod",
+  GOLANGCI_LINT_CACHE = "/Users/me/.cache/box/go/golangci-lint",
+  GOPROXY = "file:///Users/me/go/pkg/mod/cache/download,https://proxy.golang.org,direct",
+}
+```
+
+Values in `env` are set verbatim (only paths are expanded), hence the
+absolute paths. The `GOPROXY` entry is optional: it lets the sandbox fill
+its module cache from the host's download cache before going to the
+network, which `allow_hosts` must admit (`*.golang.org` is in the
+defaults). The cache is shared by every sandbox started under `paths`, so a
+sandbox can only affect the builds of other sandboxes, the same trust it
+already has over the working directory; `box clean` does not know about it.
 
 ### Network on macOS
 

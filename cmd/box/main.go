@@ -39,7 +39,7 @@ var version = "dev"
 const usage = `box - run programs inside a sandbox (bwrap on Linux, sandbox-exec on macOS)
 
 Usage:
-  box run [-n] [-v] [-T] [-c FILE] <command> [args...]   run command in a sandbox
+  box run [-n] [-v] [-T] [-f] [-c FILE] <command> [args...]   run command in a sandbox
   box show [-c FILE] <command> [args...]             print the sandbox command line
   box config [-c FILE] [<command>]                   print the effective profile
   box init [-f] [-c FILE]                            write the default config file and create profile.d
@@ -58,7 +58,8 @@ Flags:
   -c, --config    configuration file (default $BOX_CONFIG or ~/.config/box/box.toml)
   -i, --interval  refresh interval of box top (default 1s)
   -a, --all       list every overlay layer, podman dir, /tmp dir and log in box df
-  -f, --force     overwrite an existing config file in box init
+  -f, --force     run in /, $HOME or a directory above $HOME anyway (box run);
+                  overwrite an existing config file (box init)
 
 Keys in box top:
   q quit   c/m/p/t/n sort by cpu, memory, processes, uptime, name   r reverse   +/- interval
@@ -155,7 +156,7 @@ func (c *common) load() (*config.Config, error) {
 // into the sandbox itself. -T skips the relay.
 func cmdRun(argv []string, dryRun bool) error {
 	var c common
-	var verbose, noPty, onPty bool
+	var verbose, noPty, onPty, force bool
 	fs := newFlagSet("run", &c)
 	fs.BoolVar(&dryRun, "n", dryRun, "dry run")
 	fs.BoolVar(&dryRun, "dry-run", dryRun, "dry run")
@@ -164,11 +165,26 @@ func cmdRun(argv []string, dryRun bool) error {
 	fs.BoolVar(&noPty, "T", false, "no pseudo-terminal")
 	fs.BoolVar(&noPty, "no-pty", false, "no pseudo-terminal")
 	fs.BoolVar(&onPty, "on-pty", false, "started by box itself on the sandbox's pseudo-terminal (internal)")
+	fs.BoolVar(&force, "f", false, "run in /, $HOME or a directory above $HOME anyway")
+	fs.BoolVar(&force, "force", false, "run in /, $HOME or a directory above $HOME anyway")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 	if fs.NArg() == 0 {
 		return fmt.Errorf("missing command\n\n%s", usage)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	// The working directory is mounted read-write; in /, $HOME or above
+	// $HOME that is most of what the sandbox is meant to withhold. box
+	// show only prints the plan and is not refused.
+	if !dryRun && !force {
+		home, _ := os.UserHomeDir()
+		if why := cwdRefusal(cwd, home); why != "" {
+			return fmt.Errorf("refusing to run in %s: %s, which the sandbox would mount read-write (use -f to run anyway)", cwd, why)
+		}
 	}
 	if !dryRun && !noPty && !onPty && isTerminal(int(os.Stdin.Fd())) && isTerminal(int(os.Stdout.Fd())) {
 		self, err := os.Executable()
@@ -181,6 +197,9 @@ func cmdRun(argv []string, dryRun bool) error {
 		}
 		if verbose {
 			args = append(args, "-v")
+		}
+		if force {
+			args = append(args, "-f")
 		}
 		args = append(append(args, "--"), fs.Args()...)
 		code, err := runOnPty(self, args, os.Stdin, os.Stdout, os.Stderr)
@@ -197,10 +216,6 @@ func cmdRun(argv []string, dryRun bool) error {
 		return err
 	}
 	stateDir, err := config.StateDir()
-	if err != nil {
-		return err
-	}
-	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
