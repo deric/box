@@ -612,14 +612,23 @@ type Runner struct {
 	Version   string // as reported by the runner; empty when unknown
 }
 
+// SandboxExecPath is where macOS ships sandbox-exec. box uses this fixed
+// path rather than searching PATH so that a writable directory earlier in
+// PATH cannot substitute a program that runs the command unconfined.
+const SandboxExecPath = "/usr/bin/sandbox-exec"
+
 // LookupRunner finds the runner for this platform: sandbox-exec (Seatbelt)
-// on macOS, bwrap (bubblewrap) everywhere else. A missing executable is not
-// an error; Exe is left empty.
+// at SandboxExecPath on macOS, bwrap (bubblewrap) from PATH everywhere
+// else. A missing executable is not an error; Exe is left empty.
 func LookupRunner() Runner {
-	r := Runner{Name: "bwrap", Mechanism: "bubblewrap"}
 	if runtime.GOOS == "darwin" {
-		r = Runner{Name: "sandbox-exec", Mechanism: "Seatbelt"}
+		r := Runner{Name: "sandbox-exec", Mechanism: "Seatbelt"}
+		if exe, err := exec.LookPath(SandboxExecPath); err == nil {
+			r.Exe = exe
+		}
+		return r
 	}
+	r := Runner{Name: "bwrap", Mechanism: "bubblewrap"}
 	exe, err := exec.LookPath(r.Name)
 	if err != nil {
 		return r
@@ -646,7 +655,7 @@ func Build(prof config.Profile, opts Options) (*Plan, error) {
 	case r.Exe != "":
 		return buildBwrap(prof, opts, r.Exe)
 	case r.Name == "sandbox-exec":
-		return nil, fmt.Errorf("sandbox-exec not found in PATH (expected /usr/bin/sandbox-exec)")
+		return nil, fmt.Errorf("%s not found or not executable", SandboxExecPath)
 	default:
 		return nil, fmt.Errorf("bwrap not found in PATH: install bubblewrap")
 	}

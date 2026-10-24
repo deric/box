@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- macOS: `sandbox-exec` is run from the fixed path `/usr/bin/sandbox-exec`
+  instead of being looked up in `PATH`, so a writable directory earlier in
+  `PATH` (a project's `node_modules/.bin`, a mise shim directory, ...) can
+  no longer substitute a program that starts the command unconfined. `box
+  doctor` reports the fixed path.
 - macOS: sandboxes could connect to every Unix socket under the shared
   `/tmp` and `$TMPDIR`, among them the ssh-agent socket launchd creates
   there and tmux's server socket, which runs commands outside the sandbox.

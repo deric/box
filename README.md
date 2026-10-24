@@ -527,7 +527,9 @@ release and is what other agent sandboxes build on.
 
 ## Requirements
 
-- macOS: nothing beyond the system's `/usr/bin/sandbox-exec`.
+- macOS: nothing beyond the system's `/usr/bin/sandbox-exec`. `box` runs
+  exactly that path and never searches `PATH` for `sandbox-exec`, so a
+  program planted earlier in `PATH` cannot replace the sandbox.
 - Linux with unprivileged user namespaces.
 - For `cpus` and `memory`: a systemd user manager on cgroups v2, reachable
   through `$XDG_RUNTIME_DIR/systemd/private` or the session bus, with the

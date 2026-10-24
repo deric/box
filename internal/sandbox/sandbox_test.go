@@ -665,7 +665,11 @@ func TestLookupRunner(t *testing.T) {
 	if r.Name != want || r.Mechanism == "" {
 		t.Fatalf("LookupRunner() = %+v, want name %q with a mechanism", r, want)
 	}
-	if _, err := exec.LookPath(want); err != nil {
+	lookup := want
+	if want == "sandbox-exec" {
+		lookup = SandboxExecPath
+	}
+	if _, err := exec.LookPath(lookup); err != nil {
 		if r.Exe != "" {
 			t.Fatalf("Exe = %q, want empty when %s is not installed", r.Exe, want)
 		}
@@ -673,6 +677,9 @@ func TestLookupRunner(t *testing.T) {
 	}
 	if r.Exe == "" {
 		t.Fatalf("Exe is empty although %s is installed", want)
+	}
+	if want == "sandbox-exec" && r.Exe != SandboxExecPath {
+		t.Fatalf("Exe = %q, want the fixed path %s", r.Exe, SandboxExecPath)
 	}
 	if want == "bwrap" && r.Version == "" {
 		t.Fatalf("Version is empty for %s", r.Exe)
