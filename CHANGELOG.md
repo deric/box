@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- mise shims on `PATH` (`python3`, `go`, ...) refused to run inside the
+  sandbox because every `mise.toml` was untrusted there: mise records trust
+  as symlinks under `~/.local/state/mise/trusted-configs/`, which the tmpfs
+  `$HOME` hid. `~/.local/state/mise` is now a persistent overlay by default
+  (a read-only bind on macOS), so configs trusted on the host are trusted
+  inside, while `mise trust` run inside the sandbox lands in the per-binary
+  layer and never trusts anything on the host. Existing configuration
+  files do not pick the entry up: add it to `overlays` in
+  `~/.config/box/box.toml` (`box init` prints the diff).
+
 ## [0.6.1] - 2026-10-22
 
 ### Fixed
