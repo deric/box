@@ -520,14 +520,19 @@ and a release could stop accepting them.
 Inside a macOS sandbox `BOX_NAME`, `BOX_BINARY` and `BOX_DIR` are set to the
 sandbox's name, the binary's base name and the working directory; `box ps`
 finds sandboxes by these, since `sandbox-exec` leaves no wrapper process
-behind.
+behind. Since macOS 15.7 the kernel hides the environment of Apple's own
+(platform) binaries from unprivileged readers, so a sandbox whose program
+is one of them, such as `/bin/zsh`, is not listed; programs from Homebrew,
+mise or a project are.
 
 `sandbox-exec` is marked deprecated by Apple but ships with every macOS
 release and is what other agent sandboxes build on.
 
 ## Requirements
 
-- macOS: nothing beyond the system's `/usr/bin/sandbox-exec`.
+- macOS: nothing beyond the system's `/usr/bin/sandbox-exec`. `box` runs
+  exactly that path and never searches `PATH` for `sandbox-exec`, so a
+  program planted earlier in `PATH` cannot replace the sandbox.
 - Linux with unprivileged user namespaces.
 - For `cpus` and `memory`: a systemd user manager on cgroups v2, reachable
   through `$XDG_RUNTIME_DIR/systemd/private` or the session bus, with the

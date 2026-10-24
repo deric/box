@@ -239,7 +239,7 @@ func TestSeatbeltSandbox(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("sandbox-exec is macOS only")
 	}
-	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+	if _, err := exec.LookPath(SandboxExecPath); err != nil {
 		t.Skip("sandbox-exec not found")
 	}
 	home := realTempDir(t)
@@ -446,7 +446,7 @@ func sandboxExecWorks(t *testing.T) bool {
 	if runtime.GOOS != "darwin" {
 		t.Skip("sandbox-exec is macOS only")
 	}
-	exe, err := exec.LookPath("sandbox-exec")
+	exe, err := exec.LookPath(SandboxExecPath)
 	if err != nil {
 		t.Skip("sandbox-exec not found")
 	}

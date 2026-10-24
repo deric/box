@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- macOS: `sandbox-exec` is run from the fixed path `/usr/bin/sandbox-exec`
+  instead of being looked up in `PATH`, so a writable directory earlier in
+  `PATH` (a project's `node_modules/.bin`, a mise shim directory, ...) can
+  no longer substitute a program that starts the command unconfined. `box
+  doctor` reports the fixed path.
 - macOS: sandboxes could connect to every Unix socket under the shared
   `/tmp` and `$TMPDIR`, among them the ssh-agent socket launchd creates
   there and tmux's server socket, which runs commands outside the sandbox.
@@ -41,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tests: the macOS process listing test spawned `/bin/sleep`, whose
+  environment macOS 15.7 no longer exposes to unprivileged readers (it is a
+  platform binary), so it failed on current hosts; it now spawns the test
+  binary. The ssh and DNS tests closed generated data descriptors twice,
+  once through a leaked `*os.File` finalizer, which could close a
+  descriptor another test had since been given (a `TempDir` cleanup on CI
+  failed with `bad file descriptor`).
 - mise shims on `PATH` (`python3`, `go`, ...) refused to run inside the
   sandbox because every `mise.toml` was untrusted there: mise records trust
   as symlinks under `~/.local/state/mise/trusted-configs/`, which the tmpfs

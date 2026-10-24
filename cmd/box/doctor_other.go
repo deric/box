@@ -23,10 +23,12 @@ func platformChecks(u features) []check {
 	r := sandbox.LookupRunner()
 	if r.Exe == "" {
 		fix := "install bubblewrap; box supports Linux (bwrap) and macOS (sandbox-exec)"
+		msg := "not found in PATH"
 		if runtime.GOOS == "darwin" {
-			fix = "sandbox-exec ships with every macOS release at /usr/bin/sandbox-exec; check that /usr/bin is in PATH"
+			fix = "sandbox-exec ships with every macOS release; box only uses this fixed path, never one from PATH"
+			msg = "not found at " + sandbox.SandboxExecPath
 		}
-		return []check{{r.Name, statusFail, "not found in PATH", fix}}
+		return []check{{r.Name, statusFail, msg, fix}}
 	}
 	checks := []check{{r.Name, statusOK, r.Mechanism + " at " + r.Exe, ""}}
 	if r.Name != "sandbox-exec" {
