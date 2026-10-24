@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `box run` refuses to start in `/`, in `$HOME` or in a directory above
+  `$HOME` (`/home`, `/Users`, ...), since the working directory is mounted
+  read-write and the sandbox would have the whole host or the whole home
+  directory. `box run -f` (`--force`) runs there anyway; `box show` is
+  not refused.
 - macOS: `sandbox-exec` is run from the fixed path `/usr/bin/sandbox-exec`
   instead of being looked up in `PATH`, so a writable directory earlier in
   `PATH` (a project's `node_modules/.bin`, a mise shim directory, ...) can
