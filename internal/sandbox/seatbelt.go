@@ -128,8 +128,15 @@ func buildSeatbelt(prof config.Profile, opts Options, exe string) (*Plan, error)
 	if prof.ClearEnv {
 		plan.Env = append(plan.Env, passEnv(prof)...)
 	}
-	if _, set := prof.Env["TMPDIR"]; plan.TmpDir != "" && !set {
-		plan.Env = append(plan.Env, "TMPDIR="+plan.TmpDir+"/")
+	if plan.TmpDir != "" {
+		// Point programs at the private directory, since the host's /tmp
+		// is hidden. Claude Code ignores TMPDIR and uses /tmp unless
+		// CLAUDE_CODE_TMPDIR is set.
+		for _, kv := range [][2]string{{"TMPDIR", plan.TmpDir + "/"}, {"CLAUDE_CODE_TMPDIR", plan.TmpDir}} {
+			if _, set := prof.Env[kv[0]]; !set {
+				plan.Env = append(plan.Env, kv[0]+"="+kv[1])
+			}
+		}
 	}
 	for _, k := range sortedKeys(prof.Env) {
 		plan.Env = append(plan.Env, k+"="+prof.Env[k])

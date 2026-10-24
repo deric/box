@@ -158,6 +158,9 @@ func TestBuildSeatbeltPrivateTmp(t *testing.T) {
 	if !slices.Contains(plan.Env, "TMPDIR="+private+"/") {
 		t.Errorf("TMPDIR not set to the private directory: %q", plan.Env)
 	}
+	if !slices.Contains(plan.Env, "CLAUDE_CODE_TMPDIR="+private) {
+		t.Errorf("CLAUDE_CODE_TMPDIR not set to the private directory: %q", plan.Env)
+	}
 	profile := plan.Args[1]
 	hide := func(p string) int {
 		return strings.LastIndex(profile, `(deny file-read* file-write* network-outbound (subpath "`+p+`"))`)
