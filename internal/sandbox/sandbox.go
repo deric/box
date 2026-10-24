@@ -697,10 +697,26 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 		add(&mount{kind: kindTmpfs, dest: dest, size: tmpfsSize})
 	}
 	if prof.PrivateTmp {
+		plan.TmpDir = TmpDir(opts.TmpRoot, plan.Binary, opts.ID)
 		if resolveLinks {
-			plan.Warnings = append(plan.Warnings, "private_tmp is not supported on this platform; ignored")
+			// Seatbelt cannot mount over /tmp: the shared temporary
+			// directories (and the sockets in them, ssh-agent's among
+			// them) are hidden instead and TMPDIR points at the private
+			// directory, which lives underneath and so stays reachable.
+			for _, p := range []string{"/tmp", "$TMPDIR"} {
+				dest, _ := exp(p)
+				if dest == "" {
+					continue
+				}
+				if dest = realPath(dest); dest == "/" || under(opts.Cwd, dest) {
+					continue // never hide the working directory
+				}
+				add(&mount{kind: kindTmpfs, dest: dest})
+			}
+			dir := realPathPrefix(plan.TmpDir)
+			plan.TmpDir = dir
+			add(&mount{kind: kindRW, src: dir, dest: dir, visible: true})
 		} else {
-			plan.TmpDir = TmpDir(opts.TmpRoot, plan.Binary, opts.ID)
 			add(&mount{kind: kindRW, src: plan.TmpDir, dest: "/tmp", visible: true})
 		}
 	}
@@ -1144,6 +1160,23 @@ func realPath(p string) string {
 		return real
 	}
 	return p
+}
+
+// realPathPrefix is realPath for a path that may not exist yet: symlinks are
+// resolved in its longest existing prefix (/tmp/box/x -> /private/tmp/box/x).
+func realPathPrefix(p string) string {
+	p = filepath.Clean(p)
+	for dir, rest := p, ""; ; {
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
+	}
 }
 
 // covered reports whether the host path is visible at the same path inside

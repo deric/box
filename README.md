@@ -447,7 +447,8 @@ the Linux sandbox as closely as Seatbelt allows:
 | unmounted paths are absent            | unlisted paths are denied; `stat` still works everywhere so path resolution does |
 | `tmpfs`: empty, writable, discarded   | hidden: contents can be neither read nor written              |
 | `overlays`                            | read-only (with a warning)                                    |
-| `copy_files`, `sync_files`, `private_tmp`, `proxy`, `ssh` | not supported (warned and ignored)        |
+| `private_tmp`: own `/tmp`             | own `/tmp/box/<binary>-<pid>` in `TMPDIR`; the host's `/tmp` and `$TMPDIR` (and the sockets in them) are hidden |
+| `copy_files`, `sync_files`, `proxy`, `ssh` | not supported (warned and ignored)                       |
 | `network = false`: own empty netns    | no IP traffic at all, loopback included                       |
 | Unix sockets under mounted paths      | Unix sockets under exposed paths                              |
 | PID / IPC namespaces                  | processes may only inspect and signal their own sandbox; Mach services are limited to a short list (name lookup, logging, and with network: DNS and TLS trust) |
@@ -456,8 +457,11 @@ the Linux sandbox as closely as Seatbelt allows:
 | `clear_env`, `pass_env`, `env`, `unset_env` | applied by `box` before starting `sandbox-exec`         |
 
 The macOS default config (written by `box init` on a Mac) exposes the system
-directories, Homebrew, the current directory, `/tmp` and `$TMPDIR`, and hides
-`$HOME`. Programs that expect a writable `$HOME` (caches, lock files) need the
+directories, Homebrew and the current directory, gives the sandbox a private
+temporary directory, and hides `$HOME`. Seatbelt cannot put another directory
+at `/tmp`, so programs that use a fixed path there instead of `$TMPDIR` fail
+until it is added to `rw_binds` and `private_tmp` is turned off, which also
+exposes the sockets of the host's `/tmp` (ssh-agent's, tmux's). Programs that expect a writable `$HOME` (caches, lock files) need the
 relevant paths added to `rw_binds`. Claude Code's section additionally exposes
 `~/Library/Keychains`, where its login is stored. Anything else a program needs
 (a Mach service, an IOKit class) can be granted with `seatbelt_rules`, for
@@ -654,8 +658,9 @@ the same build in CI and attaches the artifacts to a GitHub release.
   the directory on exit; `box clean` deletes those whose sandbox is gone, and
   a leftover from a reused PID is cleared before the next run. To share the
   host's `/tmp` instead, set `private_tmp = false` and add `/tmp` to
-  `rw_binds` as in the example above. Seatbelt cannot remount paths, so the
-  option is ignored on macOS.
+  `rw_binds` as in the example above. Seatbelt cannot remount paths, so on
+  macOS the directory is not mounted as `/tmp`: `TMPDIR` points at it, and
+  the host's `/tmp` and `$TMPDIR` are hidden instead.
 
 ## License
 

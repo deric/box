@@ -41,9 +41,16 @@ ro_binds = [
   "?~/.config/mise", "?~/.gitconfig",
 ]
 
-# Host paths readable and writable. $TMPDIR is the per-user temporary
-# directory under /var/folders.
-rw_binds = ["$PWD", "/tmp", "?$TMPDIR"]
+# Host paths readable and writable.
+rw_binds = ["$PWD"]
+
+# Give each sandbox a temporary directory of its own: a fresh host directory
+# /tmp/box/<binary>-<pid>, which TMPDIR points at. The shared /tmp and the
+# per-user $TMPDIR under /var/folders are hidden, along with the sockets in
+# them (ssh-agent, tmux, ...); programs that write to a fixed path under /tmp
+# instead of $TMPDIR fail there. `box clean` removes directories of sandboxes
+# that have exited.
+private_tmp = true
 
 # Also mount the parent of the working directory read-write, for projects
 # that reach into their siblings (a checkout among related checkouts).
@@ -92,4 +99,3 @@ rw_binds = ["?~/.claude", "?~/.claude.json", "?~/Library/Keychains"]
 #
 # [binaries.untrusted-tool]
 # network = false
-# drop_binds = ["/tmp", "?$TMPDIR"]
