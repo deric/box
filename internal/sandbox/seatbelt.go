@@ -2,7 +2,9 @@ package sandbox
 
 import (
 	"fmt"
+	"net"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/deric/box/internal/config"
@@ -66,9 +68,19 @@ const seatbeltNetwork = `
 ; certificate checks use.
 (allow network* system-socket)
 (deny network-outbound (subpath "/"))
-(allow network-outbound (literal "/private/var/run/mDNSResponder"))
-(allow mach-lookup
-  (global-name "com.apple.dnssd.service")
+` + seatbeltDNS + seatbeltNetServices
+
+// seatbeltDNS lets the sandbox use the system resolver: libinfo hands
+// every lookup to mDNSResponder over its socket or its XPC service.
+const seatbeltDNS = `(allow network-outbound (literal "/private/var/run/mDNSResponder"))
+(allow mach-lookup (global-name "com.apple.dnssd.service"))
+`
+
+// seatbeltNetServices names the system services programs that use the
+// network rely on: path evaluation (networkd, configd) and TLS trust
+// (SecurityServer, trustd, ocspd). None of them opens connections on the
+// sandbox's behalf.
+const seatbeltNetServices = `(allow mach-lookup
   (global-name "com.apple.networkd")
   (global-name "com.apple.SystemConfiguration.configd")
   (global-name "com.apple.SystemConfiguration.DNSConfiguration")
@@ -77,6 +89,39 @@ const seatbeltNetwork = `
   (global-name "com.apple.trustd.agent")
   (global-name "com.apple.ocspd"))
 `
+
+// SeatbeltProxyRules returns the network rules of a profile behind the
+// proxy listening on addr, a loopback TCP address (see Proxy): the sandbox
+// may connect to that port and to nothing else, so the proxy's allowlist
+// is all the network it has, the way the empty network namespace is on
+// Linux. Programs may listen on loopback, where the host reaches them (a
+// dev server in a browser), but not connect to anything else there: the
+// host's loopback is not the sandbox's, so a service on it is reached, if
+// at all, through the proxy by listing localhost in allow_hosts. With dns
+// the system resolver is reachable too; its answers are not filtered, as
+// on Linux. `box doctor` compiles these rules to check the release
+// accepts them.
+func SeatbeltProxyRules(addr string, dns bool) (string, error) {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("proxy address %q: %w", addr, err)
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return "", fmt.Errorf("proxy address %q: port is not a number", addr)
+	}
+	var b strings.Builder
+	b.WriteString("\n; Network: only the proxy box runs on the host is reachable, at " + addr + ";\n")
+	b.WriteString("; it lets HTTP(S) through to allow_hosts. Programs may listen on loopback\n")
+	b.WriteString("; but reach nothing else there.\n")
+	b.WriteString(`(allow network-outbound (remote tcp "localhost:` + port + `"))` + "\n")
+	b.WriteString(`(allow network-bind network-inbound (local ip "localhost:*"))` + "\n")
+	if dns {
+		b.WriteString("; Name resolution through the system resolver (dns = true).\n")
+		b.WriteString(seatbeltDNS)
+	}
+	b.WriteString(seatbeltNetServices)
+	return b.String(), nil
+}
 
 // buildSeatbelt computes a sandbox-exec invocation whose profile grants the
 // access the mounts describe; exe is the sandbox-exec executable. Seatbelt
@@ -109,8 +154,15 @@ func buildSeatbelt(prof config.Profile, opts Options, exe string) (*Plan, error)
 
 	var b strings.Builder
 	b.WriteString(seatbeltBase)
-	if prof.Network {
+	switch {
+	case prof.Network:
 		b.WriteString(seatbeltNetwork)
+	case plan.Proxy != nil:
+		rules, err := SeatbeltProxyRules(plan.Proxy.Addr, prof.DNS)
+		if err != nil {
+			return nil, err
+		}
+		b.WriteString(rules)
 	}
 	b.WriteString("\n; Mounts from the box profile, parents first.\n")
 	for _, m := range mounts {
@@ -135,6 +187,17 @@ func buildSeatbelt(prof config.Profile, opts Options, exe string) (*Plan, error)
 		for _, kv := range [][2]string{{"TMPDIR", plan.TmpDir + "/"}, {"CLAUDE_CODE_TMPDIR", plan.TmpDir}} {
 			if _, set := prof.Env[kv[0]]; !set {
 				plan.Env = append(plan.Env, kv[0]+"="+kv[1])
+			}
+		}
+	}
+	if plan.Proxy != nil {
+		// Point proxy-aware programs at the proxy. Unlike on Linux no
+		// NO_PROXY is set: loopback here is the host's, which the
+		// profile keeps out of reach, so a request to localhost goes
+		// through the proxy like any other and is subject to allow_hosts.
+		for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+			if _, set := prof.Env[k]; !set {
+				plan.Env = append(plan.Env, k+"=http://"+plan.Proxy.Addr)
 			}
 		}
 	}

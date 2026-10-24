@@ -68,8 +68,56 @@ tmpfs = ["$HOME"]
 # Overlays are not available on macOS; listed paths are exposed read-only.
 overlays = []
 
-# Allow network access. Without it only Unix sockets under exposed paths work.
-network = true
+# Network. With network = false the sandbox has no network of its own: it
+# may connect to nothing but box's proxy, an HTTP proxy that proxy = true
+# starts on a loopback port of the host, which only lets hosts matching
+# allow_hosts through: a name matches exactly, "*.x" matches anything under
+# x, "*" everything. Inside, HTTP_PROXY and HTTPS_PROXY point at the proxy;
+# programs that ignore them have no network. Denied requests are logged to
+# <log_dir>/<binary>-<pid>-<dir>.log, where <dir> is the working directory
+# with slashes turned into dashes (`box top` shows them). Set network = true
+# to share the host network instead, or proxy = false for no network at all.
+#
+# Loopback is the host's, not the sandbox's: programs may listen on it (a
+# dev server is reachable from a browser on the host) but connect to
+# nothing else there. A request to localhost goes through the proxy like
+# any other, so listing "localhost" (or "127.0.0.1") in allow_hosts is what
+# reaches a server on the host or one started inside.
+#
+# With dns = true the sandbox can resolve names through the system resolver
+# (mDNSResponder). Answers are not filtered by allow_hosts, so a program can
+# look up any name even though it can only connect to the listed hosts; set
+# dns = false to leave the sandbox without a resolver (proxy-aware programs
+# need none: the proxy resolves the names it connects to).
+network = false
+proxy = true
+dns = true
+log_dir = "/tmp/box"
+allow_hosts = [
+  "api.dagger.cloud", "apt.voxpupuli.org",
+  "*.centos.org", "crates.io", "*.crates.io", "crt.sh",
+  "*.debian.org", "dl.google.com",
+  "files.pythonhosted.org", "forge.puppet.com", "forgeapi.puppet.com",
+  "hex.pm",
+  "github.com", "*.github.com", "*.githubusercontent.com", "gitlab.com",
+  "go.dev", "*.golang.org", "pypi.org",
+  "icinga.com", "index.rubygems.org",
+  "orca.security", "openwall.com",
+  "hub.docker.io",
+  "kernel.org", "*.kernel.org",
+  "mise-versions.jdx.dev", "mise.jdx.dev",
+  "nginx.org","nvd.nist.gov",
+  "registry.npmjs.org", "rubygems.org", "registry.dagger.io",
+  "storage.googleapis.com",
+  # container registries
+  "registry-1.docker.io", "auth.docker.io", "index.docker.io",
+  "pkgs.org", "production.cloudflare.docker.com",
+  "quay.io", "*.quay.io", "ghcr.io",
+  "registry.fedoraproject.org", "registry.access.redhat.com", "repology.org",
+  "www.securityfocus.com", "*.sigstore.dev", "sigstore.dev",
+  # Homebrew
+  "formulae.brew.sh", "*.brew.sh",
+]
 
 # Start from an empty environment instead of inheriting the host environment.
 clear_env = false
@@ -94,8 +142,20 @@ seatbelt_rules = []
 [binaries.claude]
 ro_binds = ["?~/.agents/skills"]
 rw_binds = ["?~/.claude", "?~/.claude.json", "?~/Library/Keychains"]
+allow_hosts = [
+  "*.anthropic.com", "claude.ai", "*.claude.ai", "*.claude.com",
+]
 
 # Example per-binary sections:
 #
+# [binaries.trusted-tool]
+# network = true            # the host's network, unrestricted
+#
 # [binaries.untrusted-tool]
-# network = false
+# proxy = false             # no network at all
+#
+# [binaries.quiet-tool]
+# dns = false               # proxy only, no name resolution
+#
+# [binaries.web-dev-tool]
+# allow_hosts = ["localhost"]   # reach servers on the host's loopback through the proxy

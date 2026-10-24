@@ -52,9 +52,15 @@ const (
 )
 
 // Proxy describes the allowlisting proxy a sandbox reaches the network
-// through (see package proxy).
+// through (see package proxy). On Linux it listens on Socket, a unix
+// socket bound into the sandbox's network namespace, where the forwarder
+// exposes it on ProxyAddr. On macOS, where there is no network namespace
+// to bind into, it listens on Addr, a loopback TCP port on the host that
+// the Seatbelt profile lets the sandbox connect to and nothing else; Socket
+// is then empty.
 type Proxy struct {
-	Socket string   // unix socket on the host, bound into the sandbox
+	Socket string   // unix socket on the host, bound into the sandbox (Linux)
+	Addr   string   // loopback TCP address on the host (macOS)
 	Log    string   // host file the proxy logs denied requests to
 	Allow  []string // allowed destination hosts
 	SSH    bool     // let CONNECT through to port 22 of allowed hosts
@@ -290,10 +296,11 @@ func (p *Plan) needsForwarder() bool {
 	return p.proxyInside() || len(p.Sync) > 0 || p.Pause != ""
 }
 
-// proxyInside reports whether the proxy is reachable from inside the
-// sandbox: with pasta it only serves the resolver, from the host.
+// proxyInside reports whether the proxy's socket is bound into the sandbox
+// for the forwarder to expose: with pasta it only serves the resolver,
+// from the host, and on macOS the sandbox connects to its TCP port itself.
 func (p *Plan) proxyInside() bool {
-	return p.Proxy != nil && p.Pasta == nil
+	return p.Proxy != nil && p.Proxy.Socket != "" && p.Pasta == nil
 }
 
 // Command returns the invocation as a shell-quoted string. Limits are
@@ -403,6 +410,9 @@ func (p *Plan) ProxyCommand() string {
 
 func (p *Plan) proxyArgs() []string {
 	args := []string{"_proxy", "-s", p.Proxy.Socket, "-l", p.Proxy.Log}
+	if p.Proxy.Addr != "" {
+		args = []string{"_proxy", "-tcp", p.Proxy.Addr, "-l", p.Proxy.Log}
+	}
 	if p.DNS != nil {
 		args = append(args, "-d")
 	}
@@ -485,16 +495,18 @@ func (p *Plan) startProxy() (*os.Process, error) {
 	if p.Proxy == nil {
 		return nil, nil
 	}
-	if err := makeTmpRoot(filepath.Dir(p.Proxy.Socket)); err != nil {
-		return nil, err
+	if p.Proxy.Socket != "" {
+		if err := makeTmpRoot(filepath.Dir(p.Proxy.Socket)); err != nil {
+			return nil, err
+		}
+		if err := os.Remove(p.Proxy.Socket); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
 	}
 	if dir := filepath.Dir(p.Proxy.Log); dir != filepath.Dir(p.Proxy.Socket) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, err
 		}
-	}
-	if err := os.Remove(p.Proxy.Socket); err != nil && !os.IsNotExist(err) {
-		return nil, err
 	}
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -516,6 +528,20 @@ func (p *Plan) startProxy() (*os.Process, error) {
 	// Leave the child unwaited: this process is about to exec.
 	go func() { _ = cmd.Wait() }()
 	return cmd.Process, nil
+}
+
+// reservePort picks a free loopback TCP port for the proxy of a macOS
+// sandbox: the port a listener on 127.0.0.1:0 is given, released again at
+// once so that `box _proxy` can bind it (and `box show` can print it).
+// Another process could take it in between; the proxy then fails to
+// start with "address already in use" and box run reports that.
+var reservePort = func() (string, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	addr := ln.Addr().String()
+	return addr, ln.Close()
 }
 
 // makeTmpRoot creates the directory holding private /tmp directories and
@@ -757,7 +783,20 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 	}
 	if prof.Proxy && !prof.Network {
 		if resolveLinks {
-			plan.Warnings = append(plan.Warnings, "proxy is not supported on this platform; ignored (no network)")
+			// Seatbelt has no network namespace to bind a socket into:
+			// the proxy listens on a loopback port of the host instead,
+			// which the profile lets the sandbox connect to (see
+			// buildSeatbelt). DNS is a matter of the profile as well.
+			_, logFile := ProxyFiles(opts.TmpRoot, logDir(prof, *opts), plan.Binary, opts.ID, opts.Cwd)
+			addr, err := reservePort()
+			if err != nil {
+				return nil, fmt.Errorf("proxy: %w", err)
+			}
+			plan.Proxy = &Proxy{Addr: addr, Log: logFile, Allow: prof.AllowHosts}
+			plan.Self = opts.Self
+			if prof.Pasta {
+				plan.Warnings = append(plan.Warnings, "pasta is not supported on this platform; the proxy is used instead")
+			}
 		} else {
 			sock, logFile := ProxyFiles(opts.TmpRoot, logDir(prof, *opts), plan.Binary, opts.ID, opts.Cwd)
 			plan.Proxy = &Proxy{Socket: sock, Log: logFile, Allow: prof.AllowHosts}

@@ -15,9 +15,11 @@ import (
 
 // platformChecks covers sandbox-exec on macOS, which ships with the
 // system: it is looked up and asked to run a trivial program under a
-// permissive profile. DNS, limits, podman and ssh are Linux features and
-// are not checked.
-func platformChecks(features) []check {
+// permissive profile and, where a profile uses the proxy, under the
+// network rules that confine a sandbox to it (sandbox-exec is deprecated,
+// so a release could stop accepting them). Limits, pasta, podman and ssh
+// are Linux features and are not checked.
+func platformChecks(u features) []check {
 	r := sandbox.LookupRunner()
 	if r.Exe == "" {
 		fix := "install bubblewrap; box supports Linux (bwrap) and macOS (sandbox-exec)"
@@ -41,5 +43,29 @@ func platformChecks(features) []check {
 		return append(checks, check{"sandbox", statusFail, "sandbox-exec cannot run a program: " + errors.New(msg).Error(),
 			"sandbox-exec is deprecated by Apple but still works on every release; check Console.app for sandbox denials"})
 	}
-	return append(checks, check{"sandbox", statusOK, "sandbox-exec can run a program", ""})
+	checks = append(checks, check{"sandbox", statusOK, "sandbox-exec can run a program", ""})
+	if u.proxy {
+		checks = append(checks, checkProxyRules(ctx, r.Exe))
+	}
+	return checks
+}
+
+// checkProxyRules compiles the network rules of a sandbox behind the proxy
+// (see sandbox.SeatbeltProxyRules) by running a trivial program under
+// them, on top of an otherwise permissive profile.
+func checkProxyRules(ctx context.Context, exe string) check {
+	rules, err := sandbox.SeatbeltProxyRules("127.0.0.1:1", true)
+	if err != nil {
+		return check{"network", statusFail, err.Error(), ""}
+	}
+	out, err := exec.CommandContext(ctx, exe, "-p", "(version 1)\n(allow default)\n"+rules, "/usr/bin/true").CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return check{"network", statusFail, "sandbox-exec rejects the proxy's network rules: " + msg,
+			"this macOS release does not accept the Seatbelt network filters box uses; set network = true to run without the proxy, and report the message above"}
+	}
+	return check{"network", statusOK, "sandbox-exec accepts the proxy's network rules", ""}
 }

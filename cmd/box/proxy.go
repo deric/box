@@ -25,12 +25,14 @@ type stringList []string
 func (l *stringList) String() string     { return fmt.Sprint([]string(*l)) }
 func (l *stringList) Set(s string) error { *l = append(*l, s); return nil }
 
-// cmdProxy runs the allowlisting proxy on a unix socket. It is started by
-// `box run` on the host and exits when that process (which becomes bwrap)
+// cmdProxy runs the allowlisting proxy on a unix socket (Linux) or a
+// loopback TCP port (macOS, see sandbox.Proxy). It is started by `box run`
+// on the host and exits when that process (which becomes the sandbox)
 // goes away.
 func cmdProxy(argv []string) error {
 	fs := flag.NewFlagSet("_proxy", flag.ExitOnError)
 	sock := fs.String("s", "", "unix socket to listen on")
+	tcp := fs.String("tcp", "", "TCP address to listen on instead of a unix socket")
 	logPath := fs.String("l", "", "log file for denied requests")
 	dns := fs.Bool("d", false, "relay DNS queries to the host's resolver")
 	ssh := fs.Bool("ssh", false, "let CONNECT through to port 22 of allowed hosts")
@@ -40,8 +42,8 @@ func cmdProxy(argv []string) error {
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
-	if *sock == "" {
-		return fmt.Errorf("_proxy: -s is required")
+	if *sock == "" && *tcp == "" {
+		return fmt.Errorf("_proxy: -s or -tcp is required")
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	if *logPath != "" {
@@ -52,18 +54,11 @@ func cmdProxy(argv []string) error {
 		defer func() { _ = f.Close() }()
 		logger.SetOutput(f)
 	}
-	if err := os.Remove(*sock); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	ln, err := net.Listen("unix", *sock)
+	ln, err := listenProxy(*sock, *tcp)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = ln.Close() }()
-	// The socket lives in a shared directory; only its owner may connect.
-	if err := os.Chmod(*sock, 0o600); err != nil {
-		return err
-	}
 	if ready := os.NewFile(proxy.ReadyFD, "ready"); ready != nil {
 		_, _ = ready.Write([]byte{1})
 		_ = ready.Close()
@@ -71,10 +66,15 @@ func cmdProxy(argv []string) error {
 	// The parent-death signal normally ends this process; polling the
 	// parent PID is the fallback.
 	parent := os.Getppid()
+	cleanup := func() {
+		if *sock != "" {
+			_ = os.Remove(*sock)
+		}
+	}
 	go func() {
 		for range time.Tick(time.Second) {
 			if os.Getppid() != parent {
-				_ = os.Remove(*sock)
+				cleanup()
 				os.Exit(0)
 			}
 		}
@@ -83,7 +83,7 @@ func cmdProxy(argv []string) error {
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	go func() {
 		<-sigs
-		_ = os.Remove(*sock)
+		cleanup()
 		os.Exit(0)
 	}()
 	srv := &proxy.Server{Allow: proxy.Allowlist(allow), SSH: *ssh, Log: logger}
@@ -100,6 +100,33 @@ func cmdProxy(argv []string) error {
 		}
 	}
 	return srv.Serve(ln)
+}
+
+// listenProxy opens the proxy's listener: the unix socket at sock, replaced
+// if left behind and restricted to its owner since it lives in a shared
+// directory, or with tcp set a TCP listener on that address, which should
+// be a loopback one (any local process may connect to it; what gets
+// through is still only what the allowlist admits).
+func listenProxy(sock, tcp string) (net.Listener, error) {
+	if tcp != "" {
+		ln, err := net.Listen("tcp", tcp)
+		if err != nil {
+			return nil, fmt.Errorf("proxy: %w", err)
+		}
+		return ln, nil
+	}
+	if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(sock, 0o600); err != nil {
+		_ = ln.Close()
+		return nil, err
+	}
+	return ln, nil
 }
 
 // cmdConnect runs inside the sandbox as ssh's ProxyCommand (see

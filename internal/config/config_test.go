@@ -191,8 +191,16 @@ func TestDefaultTOMLDarwin(t *testing.T) {
 		t.Fatalf("darwin default config does not parse: %v", err)
 	}
 	p := c.Resolve("claude")
-	if !p.Network || p.Proxy || len(p.Overlays) != 0 || p.Env["BOX_SANDBOX"] != "1" {
+	if p.Network || !p.Proxy || !p.DNS || p.Pasta || p.LogDir != "/tmp/box" || len(p.Overlays) != 0 || p.Env["BOX_SANDBOX"] != "1" {
 		t.Errorf("unexpected darwin defaults: %+v", p)
+	}
+	for _, want := range []string{"github.com", "*.anthropic.com", "claude.ai"} {
+		if !contains(p.AllowHosts, want) {
+			t.Errorf("allow_hosts = %v, missing %q", p.AllowHosts, want)
+		}
+	}
+	if sh := c.Resolve("sh"); contains(sh.AllowHosts, "*.anthropic.com") {
+		t.Errorf("the anthropic hosts belong to claude only, got %v for sh", sh.AllowHosts)
 	}
 	for _, want := range []string{"/System", "/usr"} {
 		if !contains(p.ROBinds, want) {

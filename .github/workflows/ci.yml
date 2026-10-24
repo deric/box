@@ -48,6 +48,18 @@ jobs:
             touch box-smoke && rm box-smoke
             echo ok
           '
+          # Network: the built-in defaults allow github.com and deny the rest;
+          # a request past the proxy is stopped by Seatbelt.
+          ./box run sh -c '
+            code=$(curl -sS -o /dev/null -w "%{http_code}" https://github.com/) || { echo "FAIL: allowed host unreachable through the proxy" >&2; exit 1; }
+            [ "$code" = 200 ] || { echo "FAIL: github.com returned $code" >&2; exit 1; }
+            code=$(curl -sS -o /dev/null -w "%{http_code}" http://example.com/)
+            [ "$code" = 403 ] || { echo "FAIL: example.com was not denied ($code)" >&2; exit 1; }
+            if curl -sS --noproxy "*" --connect-timeout 5 -o /dev/null http://example.com/ 2>/dev/null; then
+              echo "FAIL: a connection past the proxy was not blocked" >&2; exit 1
+            fi
+            echo network ok
+          '
           ./box run sleep 10 &
           sleep 2
           ./box ps | tee ps.out

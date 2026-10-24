@@ -1,15 +1,22 @@
 package sandbox
 
 import (
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/deric/box/internal/config"
+	"github.com/deric/box/internal/proxy"
 )
 
 // realTempDir returns a temporary directory with symlinks resolved (on macOS
@@ -284,5 +291,251 @@ echo "ok $BOX_NAME $BOX_BINARY $BOX_SANDBOX"
 	}
 	if data, err := os.ReadFile(filepath.Join(cwd, "out.txt")); err != nil || string(data) != "hello\n" {
 		t.Errorf("write in the working directory did not reach the host: %q %v", data, err)
+	}
+}
+
+func TestBuildSeatbeltProxy(t *testing.T) {
+	cwd := realTempDir(t)
+	logDir := filepath.Join(cwd, "logs")
+	prof := config.Profile{
+		RWBinds:    []string{"$PWD"},
+		Proxy:      true,
+		DNS:        true,
+		Pasta:      true,
+		SSH:        true,
+		AllowHosts: []string{"example.com", "*.example.org"},
+		LogDir:     logDir,
+	}
+	plan, err := buildSeatbelt(prof, Options{
+		Binary: "tool", Cwd: cwd, Home: cwd, ID: "7", Self: "/opt/box",
+		Lookup: func(string) (string, error) { return filepath.Join(cwd, "tool"), nil },
+	}, "sandbox-exec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Proxy == nil {
+		t.Fatal("proxy = true must set the plan's proxy up")
+	}
+	if plan.Proxy.Socket != "" || plan.DNS != nil || plan.Pasta != nil {
+		t.Errorf("a macOS proxy listens on TCP only, without namespaces: %+v", plan.Proxy)
+	}
+	host, port, err := net.SplitHostPort(plan.Proxy.Addr)
+	if err != nil || host != "127.0.0.1" {
+		t.Fatalf("Addr = %q, want a loopback address with a port", plan.Proxy.Addr)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n <= 0 {
+		t.Fatalf("Addr = %q, want a numeric port", plan.Proxy.Addr)
+	}
+	dir := strings.ReplaceAll(strings.TrimPrefix(cwd, "/"), "/", "-")
+	if want := filepath.Join(logDir, "tool-7-"+dir+".log"); plan.Proxy.Log != want {
+		t.Errorf("Log = %q, want %q", plan.Proxy.Log, want)
+	}
+	if !slices.Equal(plan.Proxy.Allow, prof.AllowHosts) {
+		t.Errorf("Allow = %q", plan.Proxy.Allow)
+	}
+
+	profile := plan.Args[1]
+	for _, want := range []string{
+		`(allow network-outbound (remote tcp "localhost:` + port + `"))`,
+		`(allow network-bind network-inbound (local ip "localhost:*"))`,
+		`(allow network-outbound (literal "/private/var/run/mDNSResponder"))`,
+		`(global-name "com.apple.dnssd.service")`,
+		`(global-name "com.apple.trustd")`,
+		`(allow file-read* file-write* (subpath "` + cwd + `"))`,
+	} {
+		if !strings.Contains(profile, want) {
+			t.Errorf("profile is missing %s:\n%s", want, profile)
+		}
+	}
+	for _, unwanted := range []string{"network*", "system-socket", `(remote tcp "localhost:*")`, "/opt/box"} {
+		if strings.Contains(profile, unwanted) {
+			t.Errorf("profile must not contain %s:\n%s", unwanted, profile)
+		}
+	}
+
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		if !slices.Contains(plan.Env, k+"=http://"+plan.Proxy.Addr) {
+			t.Errorf("%s not pointed at the proxy: %q", k, plan.Env)
+		}
+	}
+	for _, kv := range plan.Env {
+		if strings.HasPrefix(strings.ToUpper(kv), "NO_PROXY=") {
+			t.Errorf("NO_PROXY must not be set: loopback is the host's: %q", plan.Env)
+		}
+	}
+	if want := "/opt/box _proxy -tcp " + plan.Proxy.Addr + " -l " + plan.Proxy.Log + " -a example.com -a '*.example.org'"; plan.ProxyCommand() != want {
+		t.Errorf("ProxyCommand() = %s, want %s", plan.ProxyCommand(), want)
+	}
+	if plan.needsForwarder() {
+		t.Error("the sandbox connects to the proxy itself; no forwarder")
+	}
+	var pastaWarned, sshWarned bool
+	for _, w := range plan.Warnings {
+		pastaWarned = pastaWarned || strings.HasPrefix(w, "pasta is not supported")
+		sshWarned = sshWarned || strings.HasPrefix(w, "ssh is not supported")
+	}
+	if !pastaWarned || !sshWarned || len(plan.Warnings) != 2 {
+		t.Errorf("want pasta and ssh warnings, got %q", plan.Warnings)
+	}
+}
+
+func TestBuildSeatbeltProxyNoDNS(t *testing.T) {
+	cwd := realTempDir(t)
+	plan, err := buildSeatbelt(config.Profile{RWBinds: []string{"$PWD"}, Proxy: true, AllowHosts: []string{"*"}}, Options{
+		Binary: "tool", Cwd: cwd, Home: cwd,
+		Lookup: func(string) (string, error) { return filepath.Join(cwd, "tool"), nil },
+	}, "sandbox-exec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := plan.Args[1]
+	if strings.Contains(profile, "mDNSResponder") || strings.Contains(profile, "dnssd") {
+		t.Errorf("dns = false must keep the resolver out of reach:\n%s", profile)
+	}
+	if !strings.Contains(profile, `(remote tcp "localhost:`) || !strings.Contains(profile, `"com.apple.networkd"`) {
+		t.Errorf("the proxy and the network services must still be reachable:\n%s", profile)
+	}
+	if len(plan.Warnings) != 0 {
+		t.Errorf("unexpected warnings %q", plan.Warnings)
+	}
+}
+
+func TestBuildSeatbeltProxyEnvOverride(t *testing.T) {
+	cwd := realTempDir(t)
+	plan, err := buildSeatbelt(config.Profile{RWBinds: []string{"$PWD"}, Proxy: true, Env: map[string]string{"HTTPS_PROXY": "http://custom:1"}}, Options{
+		Binary: "tool", Cwd: cwd, Home: cwd,
+		Lookup: func(string) (string, error) { return filepath.Join(cwd, "tool"), nil },
+	}, "sandbox-exec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	for _, kv := range plan.Env {
+		if strings.HasPrefix(kv, "HTTPS_PROXY=") {
+			n++
+			if kv != "HTTPS_PROXY=http://custom:1" {
+				t.Errorf("env must win over the generated proxy setting: %q", kv)
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("HTTPS_PROXY set %d times: %q", n, plan.Env)
+	}
+}
+
+func TestSeatbeltProxyRules(t *testing.T) {
+	for _, bad := range []string{"", "127.0.0.1", "127.0.0.1:http", "::1:80"} {
+		if _, err := SeatbeltProxyRules(bad, false); err == nil {
+			t.Errorf("SeatbeltProxyRules(%q) should fail", bad)
+		}
+	}
+	rules, err := SeatbeltProxyRules("127.0.0.1:3128", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rules, `(remote tcp "localhost:3128")`) || strings.Contains(rules, "'") {
+		t.Errorf("unexpected rules:\n%s", rules)
+	}
+}
+
+// sandboxExecWorks reports whether sandbox-exec can apply a profile here;
+// it cannot inside another sandbox (box itself, say), where sandbox_apply
+// is refused.
+func sandboxExecWorks(t *testing.T) bool {
+	t.Helper()
+	if runtime.GOOS != "darwin" {
+		t.Skip("sandbox-exec is macOS only")
+	}
+	exe, err := exec.LookPath("sandbox-exec")
+	if err != nil {
+		t.Skip("sandbox-exec not found")
+	}
+	if out, err := exec.Command(exe, "-p", "(version 1) (allow default)", "/usr/bin/true").CombinedOutput(); err != nil {
+		t.Skipf("sandbox-exec cannot apply a profile here (nested sandbox?): %v %s", err, out)
+	}
+	return true
+}
+
+// TestSeatbeltProxySandbox runs curl under the default macOS profile behind
+// a proxy that allows localhost only, with a web server on the host as the
+// target: the request through the proxy reaches it, one for a host off the
+// allowlist is refused by the proxy and logged, and one past the proxy is
+// stopped by Seatbelt.
+func TestSeatbeltProxySandbox(t *testing.T) {
+	sandboxExecWorks(t)
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl not found")
+	}
+	home := realTempDir(t)
+	cwd := filepath.Join(home, "project")
+	if err := os.Mkdir(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "hello from the host\n")
+	}))
+	defer web.Close()
+	_, webPort, _ := net.SplitHostPort(strings.TrimPrefix(web.URL, "http://"))
+
+	cfg, err := config.Parse(config.DefaultDarwinTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prof := cfg.Resolve("sh")
+	prof.AllowHosts = []string{"localhost"}
+	prof.LogDir = filepath.Join(home, "logs")
+	script := strings.NewReplacer("PORT", webPort).Replace(`
+fail() { echo "FAIL: $*"; exit 1; }
+[ -n "$HTTPS_PROXY" ] || fail "HTTPS_PROXY is not set"
+body=$(curl -sS "http://localhost:PORT/") || fail "request through the proxy failed"
+[ "$body" = "hello from the host" ] || fail "unexpected body: $body"
+code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:PORT/")
+[ "$code" = 403 ] || fail "a host off the allowlist got $code, not 403"
+if curl -sS --noproxy '*' --connect-timeout 5 -o /dev/null "http://127.0.0.1:PORT/" 2> /dev/null; then
+  fail "a connection past the proxy was not blocked"
+fi
+echo ok
+`)
+	plan, err := Build(prof, Options{
+		Binary: "/bin/sh", Args: []string{"-c", script}, Cwd: cwd, Home: home,
+		TmpRoot: filepath.Join(home, "box-test"), ID: "1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Proxy == nil || plan.Proxy.Addr == "" {
+		t.Fatalf("the default profile must run behind the proxy: %+v", plan.Proxy)
+	}
+	if err := makeTmpDir(plan.TmpDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(plan.Proxy.Log), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logFile, err := os.Create(plan.Proxy.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = logFile.Close() }()
+	ln, err := net.Listen("tcp", plan.Proxy.Addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	srv := &proxy.Server{Allow: proxy.Allowlist(plan.Proxy.Allow), Log: log.New(logFile, "", log.LstdFlags)}
+	go func() { _ = srv.Serve(ln) }()
+
+	cmd := exec.Command(plan.Exe, plan.Args...)
+	cmd.Dir, cmd.Env = plan.Dir, plan.environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "ok" {
+		t.Fatalf("sandboxed shell failed: %v\n%s\nprofile:\n%s", err, out, plan.Args[1])
+	}
+	logged, err := os.ReadFile(plan.Proxy.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "denied GET http://127.0.0.1:" + webPort + "/"; !strings.Contains(string(logged), want) {
+		t.Errorf("log is missing %q:\n%s", want, logged)
 	}
 }
