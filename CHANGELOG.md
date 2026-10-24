@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- macOS: network isolation. A sandbox with `network = false` and `proxy =
+  true` is confined to box's allowlisting proxy, which listens on a free
+  loopback port of the host (`box _proxy -tcp 127.0.0.1:<port>`, started
+  before `sandbox-exec` and printed by `box show`); the generated Seatbelt
+  profile allows outgoing connections to that port and nothing else, so
+  `allow_hosts`, `log_dir` and `box top` work as on Linux and programs
+  that ignore `HTTP_PROXY`/`HTTPS_PROXY` have no network. `dns = true`
+  lets the sandbox talk to the system resolver (mDNSResponder), `dns =
+  false` hides it. Loopback stays the host's: programs may listen on it
+  but reach nothing there except the proxy; `localhost` on `allow_hosts`
+  reaches a server on the host through the proxy. `pasta` falls back to
+  the proxy with a warning. `box doctor` compiles the network rules on the
+  host, `box info` says how DNS is provided. The macOS defaults switch to
+  `network = false`, `proxy = true`, `dns = true` with the Linux
+  `allow_hosts` (plus Homebrew's); existing configuration files keep
+  `network = true` until changed (`box init` prints the diff).
+
 ### Security
 
 - macOS: sandboxes could connect to every Unix socket under the shared

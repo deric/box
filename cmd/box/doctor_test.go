@@ -106,7 +106,7 @@ pasta = true
 	}
 	cfg.Profiles = []config.DirProfile{{Name: "work", Binaries: map[string]config.Section{"git": {}}}}
 	u := featureUsage(cfg)
-	if !u.overlays || !u.dns || !u.cpu || !u.memory || !u.podman || !u.ssh || !u.pasta {
+	if !u.overlays || !u.proxy || !u.dns || !u.cpu || !u.memory || !u.podman || !u.ssh || !u.pasta {
 		t.Errorf("features = %+v, want every feature on", u)
 	}
 	if got := strings.Join(u.binaries, ","); got != "claude,git,podman" {
@@ -127,8 +127,8 @@ drop_binds = ["~/.local/share/mise", "~/.local/bin"]
 		t.Fatal(err)
 	}
 	u = featureUsage(off)
-	if u.dns || u.cpu || u.memory || u.ssh || len(u.sshKeys) != 0 {
-		t.Errorf("features = %+v, want dns, limits and ssh off", u)
+	if u.proxy || u.dns || u.cpu || u.memory || u.ssh || len(u.sshKeys) != 0 {
+		t.Errorf("features = %+v, want proxy, dns, limits and ssh off", u)
 	}
 }
 

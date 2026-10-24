@@ -2,7 +2,10 @@
 
 package sandbox
 
-import "errors"
+import (
+	"errors"
+	"runtime"
+)
 
 // DNSAddr is where the DNS listeners are bound inside a Linux sandbox.
 const DNSAddr = "127.0.0.1:53"
@@ -23,8 +26,15 @@ func DNSStatus() (unshare, version string, err error) {
 	return "", "", errors.New("not supported on this platform")
 }
 
-// DNSInfo describes how DNS is provided to sandboxes on this host.
-func DNSInfo() string { return "not supported on this platform" }
+// DNSInfo describes how DNS is provided to sandboxes on this host: on
+// macOS a sandbox behind the proxy talks to the system resolver when dns
+// is set (see SeatbeltProxyRules); elsewhere there is no sandbox.
+func DNSInfo() string {
+	if runtime.GOOS == "darwin" {
+		return "the system resolver (mDNSResponder), reachable with dns = true"
+	}
+	return "not supported on this platform"
+}
 
 // PastaSetup is what `box _netns -pasta` needs on Linux.
 type PastaSetup struct {

@@ -105,6 +105,7 @@ type check struct {
 // skipped.
 type features struct {
 	overlays bool
+	proxy    bool
 	dns      bool
 	cpu      bool
 	memory   bool
@@ -261,6 +262,9 @@ func featureUsage(cfg *config.Config) features {
 		p := e.profile
 		if len(p.Overlays) > 0 {
 			u.overlays = true
+		}
+		if p.Proxy && !p.Network {
+			u.proxy = true
 		}
 		if p.DNS && p.Proxy && !p.Network {
 			u.dns = true

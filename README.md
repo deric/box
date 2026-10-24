@@ -117,6 +117,10 @@ leave a sandbox without a resolver, which closes that channel. Where the
 namespaces cannot be set up (no `unshare`, user namespaces disabled) `box`
 warns and runs the sandbox without DNS; `box info` reports what it found.
 
+On macOS the same proxy runs on a loopback port of the host instead of a
+unix socket, and the Seatbelt profile lets the sandbox connect to that port
+and nothing else; see [macOS](#macos).
+
 #### The pasta backend
 
 The proxy only carries HTTP, HTTPS and (with `ssh = true`) SSH, and only
@@ -260,9 +264,11 @@ with `?` to skip silently.
 | `copy_files`      | list              | host files copied into the sandbox (`--file`); changes made inside never reach the host |
 | `sync_files`      | list              | like `copy_files`, but the copy is written back over the host file when the command exits; if the host file changed meanwhile you are shown the diff and asked |
 | `drop_binds`      | list              | inherited entries to remove (binary sections only)             |
-| `network`         | bool              | share the host network; `false` gives an empty namespace       |
+| `network`         | bool              | share the host network; `false` gives an empty namespace (on macOS: no network but the proxy) |
 | `proxy`           | bool              | with `network = false`: reach `allow_hosts` through a proxy on the host |
 | `allow_hosts`     | list              | hosts the proxy lets through: `name`, `*.suffix` or `*`        |
+| `dns`             | bool              | with `proxy`: let the sandbox resolve names (through the proxy on Linux, the system resolver on macOS); answers are not filtered |
+| `pasta`           | bool              | with `proxy`: a network interface of its own through pasta instead of the HTTP proxy, any protocol to `allow_hosts` (Linux only) |
 | `log_dir`         | string            | directory for the proxy's denied-request logs (default `/tmp/box`) |
 | `hostname`        | string            | hostname inside the sandbox; empty keeps the host's            |
 | `new_session`     | bool              | `--new-session` when `box run` is not on a terminal (blocks TIOCSTI, breaks shell job control); on one the sandbox has a terminal of its own, see [Terminal](#terminal) |
@@ -448,17 +454,22 @@ the Linux sandbox as closely as Seatbelt allows:
 | `tmpfs`: empty, writable, discarded   | hidden: contents can be neither read nor written              |
 | `overlays`                            | read-only (with a warning)                                    |
 | `private_tmp`: own `/tmp`             | own `/tmp/box/<binary>-<pid>` in `TMPDIR`; the host's `/tmp` and `$TMPDIR` (and the sockets in them) are hidden |
-| `copy_files`, `sync_files`, `proxy`, `ssh` | not supported (warned and ignored)                       |
+| `copy_files`, `sync_files`, `ssh`, `pasta` | not supported (warned and ignored; `pasta` falls back to the proxy) |
 | `network = false`: own empty netns    | no IP traffic at all, loopback included                       |
+| `proxy`: unix socket bound into the sandbox, exposed on `127.0.0.1:3128` by the forwarder | the proxy listens on a loopback port of the host, the only address the sandbox may connect to; `HTTP_PROXY` and `HTTPS_PROXY` point at it, `NO_PROXY` is left unset |
+| `allow_hosts`, `log_dir`, `box top`   | the same: the proxy is the same program                       |
+| `dns`: box's resolver inside, relaying through the proxy | the system resolver (mDNSResponder) is reachable; `dns = false` hides it |
+| loopback: the sandbox's own           | the host's: programs may listen on it (and the host reach them), but connect to nothing there except the proxy; list `localhost` in `allow_hosts` to reach a server on the host through the proxy |
 | Unix sockets under mounted paths      | Unix sockets under exposed paths                              |
-| PID / IPC namespaces                  | processes may only inspect and signal their own sandbox; Mach services are limited to a short list (name lookup, logging, and with network: DNS and TLS trust) |
+| PID / IPC namespaces                  | processes may only inspect and signal their own sandbox; Mach services are limited to a short list (name lookup, logging, and with network or the proxy: TLS trust and, with `dns`, DNS) |
 | `hostname`, `new_session`, `disable_userns` | not supported (warned and ignored)                      |
 | `cpus`, `memory`, `tmpfs_size`        | not supported (warned and ignored)                            |
 | `clear_env`, `pass_env`, `env`, `unset_env` | applied by `box` before starting `sandbox-exec`         |
 
 The macOS default config (written by `box init` on a Mac) exposes the system
 directories, Homebrew and the current directory, gives the sandbox a private
-temporary directory, and hides `$HOME`. Seatbelt cannot put another directory
+temporary directory, hides `$HOME`, and puts the sandbox behind the proxy
+with the same `allow_hosts` as on Linux. Seatbelt cannot put another directory
 at `/tmp`, so programs that use a fixed path there instead of `$TMPDIR` fail
 until it is added to `rw_binds` and `private_tmp` is turned off, which also
 exposes the sockets of the host's `/tmp` (ssh-agent's, tmux's). Programs that expect a writable `$HOME` (caches, lock files) need the
@@ -466,6 +477,45 @@ relevant paths added to `rw_binds`. Claude Code's section additionally exposes
 `~/Library/Keychains`, where its login is stored. Anything else a program needs
 (a Mach service, an IOKit class) can be granted with `seatbelt_rules`, for
 example `'(allow mach-lookup (global-name "com.apple.pasteboard.1"))'`.
+
+### Network on macOS
+
+Seatbelt has no network namespaces, and its network filters tell loopback
+from everything else but cannot name a host, so the allowlist is enforced
+the way it is on Linux: by the proxy, which runs on the host and only lets
+`allow_hosts` through. With `network = false` and `proxy = true` (the macOS
+defaults) `box` picks a free loopback port, starts `box _proxy -tcp
+127.0.0.1:<port>` on it before `sandbox-exec`, and the generated profile
+allows outgoing connections to that port and to nothing else: no other IP
+traffic, no UDP, no DNS on the wire. `HTTP_PROXY`, `HTTPS_PROXY` (and their
+lower-case twins) point at the proxy; programs that ignore them have no
+network. Denied requests land in the same log as on Linux and `box top`
+shows them. The port is part of the profile, so `box show` prints it. Any
+local process may connect to the proxy, since a TCP port has no owner the
+way the unix socket does; what gets through it is still only what
+`allow_hosts` admits.
+
+Loopback is the host's, not the sandbox's. Programs may bind and accept
+connections on it, so a dev server started inside is reachable from a
+browser on the host, but they cannot connect to anything there other than
+the proxy: neither the host's services nor a server they started
+themselves. Since `NO_PROXY` is not set, a request to `localhost` goes
+through the proxy like any other and is refused unless `localhost` (or
+`127.0.0.1`) is on `allow_hosts`; listing it is what reaches a server on
+the host's loopback, as on Linux, where a name that matches only through a
+wildcard never does. Binding to all interfaces (`0.0.0.0`) is refused.
+
+With `dns = true` the sandbox can talk to the system resolver,
+mDNSResponder, over its socket and XPC service, so `getaddrinfo` works
+inside; its answers are not filtered, as on Linux, and `dns = false` hides
+the resolver (proxy-aware programs need none, since the proxy resolves the
+hosts it connects to). The Mach services TLS trust evaluation uses
+(`trustd`, `SecurityServer`, `ocspd`) and path evaluation (`networkd`,
+`configd`) stay reachable; none of them opens connections on the sandbox's
+behalf. `pasta` and `ssh` are Linux features: `pasta = true` falls back to
+the proxy with a warning, `ssh = true` is ignored. `box doctor` compiles the
+network rules on the host it runs on, since `sandbox-exec` is deprecated
+and a release could stop accepting them.
 
 Inside a macOS sandbox `BOX_NAME`, `BOX_BINARY` and `BOX_DIR` are set to the
 sandbox's name, the binary's base name and the working directory; `box ps`
@@ -492,7 +542,8 @@ release and is what other agent sandboxes build on.
 - Go 1.24 or newer to build: `go build -o box ./cmd/box`
 
 `box doctor` checks all of this on the host it runs on: it looks for
-`bwrap` (or `sandbox-exec`) and its version, starts an empty sandbox and
+`bwrap` (or `sandbox-exec`) and its version, starts an empty sandbox (on
+macOS also one under the proxy's network rules) and
 mounts an overlay inside one, probes `unshare` for DNS and the systemd user
 manager and its delegated controllers for limits, loads the configuration
 and the profiles, makes sure the state directory and `/tmp/box` are
@@ -566,8 +617,9 @@ the same build in CI and attaches the artifacts to a GitHub release.
   the one that does so, and stays to relay the terminal and pass the exit
   status on (see [Terminal](#terminal)). With the proxy enabled it forks the
   proxy process before the `exec`, which is told to die with it (`bwrap`
-  inherits that role); inside the sandbox the command runs as a child of
-  the forwarder, which passes signals and the exit status through.
+  inherits that role; on macOS the proxy watches its parent instead);
+  inside a Linux sandbox the command runs as a child of the forwarder,
+  which passes signals and the exit status through, on macOS directly.
 - Every sandbox has a name, shown in the `NAME` column of `box ps`: the last
   component of the working directory it was started in (`box` for
   `~/dev/box`), with `-2`, `-3`, ... appended while a running sandbox
