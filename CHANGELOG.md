@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- macOS: `sync_files`, which Seatbelt used to ignore, and for Claude Code
+  `~/.claude` and `~/.claude.json` as its entries in place of read-write
+  binds. An entry may be a file or a directory: it is copied (cloned on
+  APFS, so a large `~/.claude` costs nothing) under
+  `/tmp/box/<binary>-<pid>.sync/` before the sandbox starts, `copy/` for
+  the program and `base/` kept untouched, the original is hidden, and
+  `box _forward`, now the parent of `sandbox-exec` on the host, writes the
+  changes back when the command exits: files added or modified in the
+  copy are written over the host's, files removed are removed, each a
+  conflict shown as a diff and asked about when the host changed the same
+  file meanwhile; files the sandbox left alone are not touched, whatever
+  happened to them on the host. The directory stays until `box clean`
+  (`box df` lists it as `sync`) so a session's changes can be inspected
+  (`diff -r base copy`). Since Seatbelt cannot put the copy at the
+  original's path the program is pointed at it: `CLAUDE_CONFIG_DIR` for
+  claude, which then keeps `.claude.json` inside that directory, where box
+  places its copy; `BOX_SYNC_DIR` names the `copy/` directory for anything
+  else. `box show` prints the copies made (`# copied on the host first`).
 - macOS: network isolation. A sandbox with `network = false` and `proxy =
   true` is confined to box's allowlisting proxy, which listens on a free
   loopback port of the host (`box _proxy -tcp 127.0.0.1:<port>`, started

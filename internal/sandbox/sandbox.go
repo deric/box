@@ -222,6 +222,11 @@ const (
 	DirEnv    = "BOX_DIR"
 )
 
+// SyncEnv is set inside macOS sandboxes with sync_files to the directory
+// holding their copies, each at its path relative to the home directory
+// (or to the root), for programs that have to be told where to look.
+const SyncEnv = "BOX_SYNC_DIR"
+
 // DefaultName returns the name a sandbox started in cwd gets unless one is
 // given: the last component of cwd, or the binary's base name when cwd has
 // none (the root directory).
@@ -270,6 +275,10 @@ type Plan struct {
 	// overwrite (see Conflict).
 	Sync     []SyncFile
 	SyncSave string
+	// SyncDir, on macOS, is the host directory the sync_files copies are
+	// made in before running: each entry's copy under copy/ and its
+	// untouched twin under base/ (see SyncFile). It is created fresh.
+	SyncDir string
 	// Pause, when set, is the PID file of podman's pause process, which the
 	// forwarder creates inside the sandbox before running the command.
 	Pause string
@@ -289,9 +298,42 @@ type Plan struct {
 	Env      []string
 }
 
-// needsForwarder reports whether the command runs under `box _forward`
-// inside the sandbox: to reach the proxy, to write sync_files back, or to
-// keep podman's pause process.
+// makeSyncCopies creates SyncDir and the copies of the sync_files in it
+// (see SyncFile), shallower entries first so that one nested in another
+// lands inside the other's copy. A directory left by an earlier sandbox
+// of the same PID is removed first.
+func (p *Plan) makeSyncCopies() error {
+	if p.SyncDir == "" {
+		return nil
+	}
+	if err := makeTmpRoot(filepath.Dir(p.SyncDir)); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(p.SyncDir); err != nil {
+		return err
+	}
+	if err := os.Mkdir(p.SyncDir, 0o700); err != nil {
+		return err
+	}
+	files := append([]SyncFile{}, p.Sync...)
+	sort.SliceStable(files, func(i, j int) bool { return depth(files[i].Path) < depth(files[j].Path) })
+	for _, f := range files {
+		for _, dst := range []string{f.Path, f.Base} {
+			if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+				return err
+			}
+			if err := cloneTree(f.Mount, dst); err != nil {
+				return fmt.Errorf("copying %s to %s: %w", f.Mount, dst, err)
+			}
+		}
+	}
+	return nil
+}
+
+// needsForwarder reports whether the command runs under `box _forward`:
+// to reach the proxy, to write sync_files back, or to keep podman's pause
+// process. On Linux the forwarder runs inside the sandbox; on macOS it is
+// the parent of sandbox-exec, on the host.
 func (p *Plan) needsForwarder() bool {
 	return p.proxyInside() || len(p.Sync) > 0 || p.Pause != ""
 }
@@ -452,6 +494,9 @@ func (p *Plan) Exec() error {
 		if err := makeTmpDir(p.TmpDir); err != nil {
 			return err
 		}
+	}
+	if err := p.makeSyncCopies(); err != nil {
+		return err
 	}
 	if p.Dir != "" {
 		if err := os.Chdir(p.Dir); err != nil {
@@ -764,9 +809,17 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 			add(m)
 		}
 	}
+	if resolveLinks && len(prof.SyncFiles) > 0 {
+		// Seatbelt cannot put a copy at the original's path: the copies
+		// live under a directory of their own on the host, the originals
+		// are hidden and the forwarder, running on the host as the parent
+		// of sandbox-exec, writes them back (see collectSyncCopies).
+		for _, m := range collectSyncCopies(prof, opts, plan, exp) {
+			add(m)
+		}
+	}
 	for _, p := range prof.SyncFiles {
 		if resolveLinks {
-			plan.Warnings = append(plan.Warnings, "sync_files is not supported on this platform; ignored")
 			break
 		}
 		m := copyFile(exp, p, plan)
@@ -912,7 +965,7 @@ func collect(prof config.Profile, opts *Options, plan *Plan, resolveLinks bool) 
 	if prof.BindBinary {
 		expose = append(expose, resolved)
 	}
-	if plan.needsForwarder() {
+	if plan.needsForwarder() && !resolveLinks {
 		expose = append(expose, opts.Self) // runs the forwarder inside
 	}
 	for _, e := range expose {

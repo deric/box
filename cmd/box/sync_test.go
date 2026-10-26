@@ -109,3 +109,43 @@ func TestResolveConflictsSaveFails(t *testing.T) {
 		t.Errorf("host = %q, want it kept even when saving fails", data)
 	}
 }
+
+func TestResolveConflictsRemoved(t *testing.T) {
+	c, host, saveDir := conflictFixture(t)
+	c.Copy, c.Removed = nil, true
+	var out bytes.Buffer
+	resolveConflicts([]sandbox.Conflict{c}, true, strings.NewReader("n\n"), &out, saveDir, "/host/saved")
+	if !strings.Contains(out.String(), "the sandbox removed its copy") || !strings.Contains(out.String(), "remove /home/u/.claude.json as the sandbox did?") {
+		t.Errorf("output = %q", out.String())
+	}
+	if !strings.Contains(out.String(), "box: kept /home/u/.claude.json\n") || strings.Contains(out.String(), "saved as") {
+		t.Errorf("a removed copy has nothing to save: %q", out.String())
+	}
+	if _, err := os.Stat(host); err != nil {
+		t.Errorf("host file must be kept: %v", err)
+	}
+	entries, _ := os.ReadDir(saveDir)
+	if len(entries) != 0 {
+		t.Errorf("nothing should be saved, got %d entries", len(entries))
+	}
+
+	out.Reset()
+	resolveConflicts([]sandbox.Conflict{c}, true, strings.NewReader("y\n"), &out, saveDir, "/host/saved")
+	if _, err := os.Stat(host); !os.IsNotExist(err) {
+		t.Errorf("host file should be removed on yes: %v", err)
+	}
+}
+
+func TestResolveConflictsNamesHostPath(t *testing.T) {
+	c, _, saveDir := conflictFixture(t)
+	c.File.Base = "/tmp/box/claude-1.sync/base/.claude.json"
+	c.File.Path = "/tmp/box/claude-1.sync/copy/.claude.json"
+	var out bytes.Buffer
+	resolveConflicts([]sandbox.Conflict{c}, false, strings.NewReader(""), &out, saveDir, saveDir)
+	if !strings.Contains(out.String(), "box: "+c.File.Mount+" changed on the host") || strings.Contains(out.String(), "/copy/.claude.json") {
+		t.Errorf("a macOS entry is named by its host path: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "saved as "+saveDir+"/host.json.") {
+		t.Errorf("the copy is saved into the host directory directly: %q", out.String())
+	}
+}

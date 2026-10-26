@@ -3,7 +3,9 @@ package sandbox
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -207,10 +209,119 @@ func buildSeatbelt(prof config.Profile, opts Options, exe string) (*Plan, error)
 	plan.Env = append(plan.Env, NameEnv+"="+plan.Name, BinaryEnv+"="+plan.Binary, DirEnv+"="+opts.Cwd)
 	plan.Dir = opts.Cwd
 
+	if plan.SyncDir != "" {
+		// Where the sync_files copies are, for programs (or wrappers) that
+		// need telling; see SyncEnv.
+		plan.Env = append(plan.Env, SyncEnv+"="+filepath.Join(plan.SyncDir, "copy"))
+	}
+	if dir := claudeConfigDir(plan, opts); dir != "" {
+		// Claude Code finds its directory through CLAUDE_CONFIG_DIR, and
+		// with that set keeps ~/.claude.json in it (see syncCopyName).
+		if _, set := prof.Env["CLAUDE_CONFIG_DIR"]; !set {
+			plan.Env = append(plan.Env, "CLAUDE_CONFIG_DIR="+dir)
+		}
+	}
+
 	args := append([]string{}, prof.ExtraArgs...)
 	args = append(args, "-p", b.String(), "--", opts.Binary)
 	plan.Args = append(args, opts.Args...)
+	if len(plan.Sync) > 0 {
+		// The forwarder runs on the host as the parent of sandbox-exec:
+		// once the command exits it writes the sync_files copies back
+		// with the host's full access, so nothing of the originals needs
+		// to reach the sandbox.
+		fw := []string{"_forward", "-x", "-W", plan.SyncSave}
+		for _, sf := range plan.Sync {
+			fw = append(fw, "-w", sf.Arg())
+		}
+		plan.Args = append(append(fw, "--", plan.Exe), plan.Args...)
+		plan.Exe = plan.Self
+	}
 	return plan, nil
+}
+
+// collectSyncCopies prepares the sync_files of a Seatbelt sandbox, which
+// cannot place a copy at the original's path: each entry (a file or a
+// directory) is copied under Plan.SyncDir before running, twice (see
+// SyncFile), the copy is exposed read-write and the original is hidden.
+// The program has to be pointed at the copy; Claude Code is, through
+// CLAUDE_CONFIG_DIR (see claudeConfigDir). Entries that do not exist are
+// skipped with a warning, unless optional.
+func collectSyncCopies(prof config.Profile, opts *Options, plan *Plan, exp func(string) (string, bool)) []*mount {
+	var hosts []string
+	for _, p := range prof.SyncFiles {
+		src, optional := exp(p)
+		if src == "" {
+			continue
+		}
+		fi, err := os.Stat(src)
+		if err != nil {
+			if !optional {
+				plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s skipped: %v", src, err))
+			}
+			continue
+		}
+		if !fi.IsDir() && !fi.Mode().IsRegular() {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s skipped: not a regular file or a directory", src))
+			continue
+		}
+		hosts = append(hosts, realPath(src))
+	}
+	if len(hosts) == 0 {
+		return nil
+	}
+	plan.SyncDir = realPathPrefix(TmpDir(opts.TmpRoot, plan.Binary, opts.ID) + ".sync")
+	root := opts.StateDir
+	if root == "" {
+		root = opts.TmpRoot
+	}
+	plan.SyncSave = filepath.Join(root, "sync")
+	plan.Dirs = append(plan.Dirs, plan.SyncSave)
+	plan.Self = opts.Self
+	home := realPath(filepath.Clean(opts.Home))
+	var mounts []*mount
+	for _, host := range hosts {
+		rel := syncCopyName(host, home, hosts)
+		sf := SyncFile{
+			Path:  filepath.Join(plan.SyncDir, "copy", rel),
+			Mount: host,
+			Base:  filepath.Join(plan.SyncDir, "base", rel),
+		}
+		plan.Sync = append(plan.Sync, sf)
+		mounts = append(mounts,
+			&mount{kind: kindTmpfs, dest: host},
+			&mount{kind: kindRW, src: sf.Path, dest: sf.Path, visible: true})
+	}
+	return mounts
+}
+
+// syncCopyName is where the copy of host goes, relative to the copy
+// directory: its path relative to the home directory, or to the root for
+// a path outside it. Claude Code's ~/.claude.json is the exception: with
+// CLAUDE_CONFIG_DIR set, claude keeps that file inside the directory the
+// variable names, so when ~/.claude is synced as well the copy goes into
+// the copy of ~/.claude (and is left out of that directory's write-back,
+// being an entry of its own).
+func syncCopyName(host, home string, hosts []string) string {
+	if host == filepath.Join(home, ".claude.json") && slices.Contains(hosts, filepath.Join(home, ".claude")) {
+		return filepath.Join(".claude", ".claude.json")
+	}
+	if rel, err := filepath.Rel(home, host); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	return strings.TrimPrefix(host, "/")
+}
+
+// claudeConfigDir returns the copy of ~/.claude when it is a sync_files
+// entry, for CLAUDE_CONFIG_DIR to point claude at, or "" when it is not.
+func claudeConfigDir(plan *Plan, opts Options) string {
+	dir := filepath.Join(realPath(filepath.Clean(opts.Home)), ".claude")
+	for _, sf := range plan.Sync {
+		if sf.Mount == dir {
+			return sf.Path
+		}
+	}
+	return ""
 }
 
 func (m *mount) seatbelt() string {
