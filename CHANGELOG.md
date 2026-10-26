@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-26
+
 ### Added
 
 - macOS: `sync_files`, which Seatbelt used to ignore, and for Claude Code
@@ -85,6 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   layer and never trusts anything on the host. Existing configuration
   files do not pick the entry up: add it to `overlays` in
   `~/.config/box/box.toml` (`box init` prints the diff).
+
+[Full changelog]: https://github.com/deric/box/compare/v0.6.1...v0.7.0
 
 ## [0.6.1] - 2026-10-22
 
@@ -365,4 +369,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Packaging with nfpm and a Dagger-based release pipeline.
 
 [0.1.1]: https://github.com/deric/box/releases/tag/v0.1.1
-[Unreleased]: https://github.com/deric/box/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/deric/box/compare/v0.7.0...HEAD
