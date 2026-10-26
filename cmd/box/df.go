@@ -19,7 +19,7 @@ import (
 // layer, a podman state directory, a private /tmp directory or a proxy log.
 type diskEntry struct {
 	name string // binary
-	kind string // "overlay", "podman", "tmp" or "log"
+	kind string // "overlay", "podman", "tmp", "sync" (macOS sync_files copies) or "log"
 	path string
 	size int64 // bytes on disk
 }
@@ -40,7 +40,7 @@ func (u *diskUsage) add(e diskEntry) {
 		u.overlays += e.size
 	case "podman":
 		u.podman += e.size
-	case "tmp":
+	case "tmp", "sync":
 		u.tmp += e.size
 	case "log":
 		u.logs += e.size
@@ -194,8 +194,10 @@ func kindOrder(kind string) int {
 		return 1
 	case "tmp":
 		return 2
+	case "sync":
+		return 3
 	}
-	return 3
+	return 4
 }
 
 // gatherUsage measures the disk usage of every binary that has overlay
@@ -270,8 +272,12 @@ func gatherUsage(overlayRoot, podmanRoot, tmpRoot string, logDirs []string, filt
 			path := filepath.Join(dir, name)
 			switch {
 			case e.IsDir() && dir == tmpRoot:
+				kind := "tmp"
+				if strings.HasSuffix(name, ".sync") {
+					kind, name = "sync", strings.TrimSuffix(name, ".sync")
+				}
 				if bin, _, ok := splitEntry(name, false); ok {
-					if err := add(bin, "tmp", path); err != nil {
+					if err := add(bin, kind, path); err != nil {
 						return nil, err
 					}
 				}

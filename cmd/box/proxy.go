@@ -278,7 +278,10 @@ func cmdFilter(argv []string) error {
 // written back over its host original (bound at mount) once the command
 // exits, unless the original changed on the host meanwhile: then the user
 // is shown the difference and asked, and a copy kept aside lands in the
-// host directory given with -W (bound at sandbox.SaveDir).
+// host directory given with -W (bound at sandbox.SaveDir). On macOS the
+// forwarder runs on the host instead, as the parent of sandbox-exec (-x):
+// -w path=mount=base entries may be directories (see sandbox.SyncFile) and
+// the -W directory is written to directly.
 func cmdForward(argv []string) error {
 	fs := flag.NewFlagSet("_forward", flag.ExitOnError)
 	sock := fs.String("s", "", "proxy unix socket (no proxy when empty)")
@@ -289,6 +292,7 @@ func cmdForward(argv []string) error {
 	var syncArgs stringList
 	fs.Var(&syncArgs, "w", "sync file as path=mount (repeatable)")
 	saveDir := fs.String("W", "", "host directory bound at "+sandbox.SaveDir+" for sync file copies kept aside")
+	outside := fs.Bool("x", false, "running on the host, outside the sandbox (macOS): copies kept aside go to -W directly")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
@@ -386,9 +390,16 @@ func cmdForward(argv []string) error {
 	if serr != nil {
 		fmt.Fprintln(os.Stderr, "box:", serr)
 	}
+	for _, line := range syncer.Summary() {
+		fmt.Fprintln(os.Stderr, "box:", line)
+	}
 	if len(conflicts) > 0 {
 		ask := isTerminal(int(os.Stdin.Fd())) && isTerminal(int(os.Stderr.Fd()))
-		resolveConflicts(conflicts, ask, os.Stdin, os.Stderr, sandbox.SaveDir, *saveDir)
+		dir := sandbox.SaveDir
+		if *outside {
+			dir = *saveDir
+		}
+		resolveConflicts(conflicts, ask, os.Stdin, os.Stderr, dir, *saveDir)
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {

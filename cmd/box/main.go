@@ -247,6 +247,11 @@ func cmdRun(argv []string, dryRun bool) error {
 		for _, f := range plan.WrittenFiles() {
 			fmt.Println("# written on the host first:", f)
 		}
+		for _, sf := range plan.Sync {
+			if sf.Base != "" {
+				fmt.Printf("# copied on the host first: %s -> %s\n", sf.Mount, sf.Path)
+			}
+		}
 		if pc := plan.ProxyCommand(); pc != "" {
 			fmt.Println("# started on the host first:", pc)
 		}
@@ -552,6 +557,8 @@ func cleanDir(dir, filter string, tmp bool) (int, error) {
 			name = strings.TrimSuffix(name, ext)
 		} else if !tmp {
 			continue
+		} else {
+			name = strings.TrimSuffix(name, ".sync") // sync_files copies (macOS)
 		}
 		bin, pid, ok := splitEntry(name, ext == ".log")
 		if !ok || (filter != "" && bin != filter) || procs.IsRunning(pid, bin) {

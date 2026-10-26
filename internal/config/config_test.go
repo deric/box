@@ -207,10 +207,16 @@ func TestDefaultTOMLDarwin(t *testing.T) {
 			t.Errorf("ro_binds = %v, missing %q", p.ROBinds, want)
 		}
 	}
-	for _, want := range []string{"$PWD", "?~/.claude"} {
+	for _, want := range []string{"$PWD", "?~/Library/Keychains"} {
 		if !contains(p.RWBinds, want) {
 			t.Errorf("rw_binds = %v, missing %q", p.RWBinds, want)
 		}
+	}
+	if contains(p.RWBinds, "?~/.claude") || contains(p.RWBinds, "?~/.claude.json") {
+		t.Errorf("~/.claude and ~/.claude.json are synced, not bound: rw_binds = %v", p.RWBinds)
+	}
+	if got, want := p.SyncFiles, []string{"?~/.claude", "?~/.claude.json"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sync_files = %v, want %v", got, want)
 	}
 	if contains(p.RWBinds, "/tmp") || contains(p.RWBinds, "?$TMPDIR") || !p.PrivateTmp {
 		t.Errorf("/tmp and $TMPDIR must come from private_tmp, not rw_binds %v", p.RWBinds)

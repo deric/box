@@ -68,6 +68,15 @@ tmpfs = ["$HOME"]
 # Overlays are not available on macOS; listed paths are exposed read-only.
 overlays = []
 
+# Files or directories the sandbox gets a copy of, written back to the host
+# when the command exits (see the claude section below). On APFS the copies
+# are clones and cost nothing. Seatbelt cannot place a copy at the original's
+# path: it lives under /tmp/box/<binary>-<pid>.sync/copy/ at its path
+# relative to the home directory (BOX_SYNC_DIR inside names that directory),
+# the original is hidden, and the program has to be told, as box tells Claude
+# Code through CLAUDE_CONFIG_DIR. copy_files is not supported.
+sync_files = []
+
 # Network. With network = false the sandbox has no network of its own: it
 # may connect to nothing but box's proxy, an HTTP proxy that proxy = true
 # starts on a loopback port of the host, which only lets hosts matching
@@ -137,11 +146,21 @@ extra_args = []
 seatbelt_rules = []
 
 # Claude Code keeps its settings, sessions, memory, skills and plugins in
-# ~/.claude, its global state in ~/.claude.json, and its login credentials in
-# the login keychain. Skills in the cross-agent ~/.agents/skills are readable.
+# ~/.claude, its global state (folder trust, MCP servers, OAuth account) in
+# ~/.claude.json and its login credentials in the login keychain. Without
+# overlays, both are sync_files: claude works on copies, made when it starts
+# and written back to the host when it exits, file by file for the directory,
+# so a session on the host meanwhile loses nothing it wrote. A file that
+# changed on both sides is shown as a diff and asked about instead. claude is
+# pointed at the copies through CLAUDE_CONFIG_DIR, which also makes it keep
+# .claude.json inside that directory (box places the copy accordingly). The
+# copies stay under /tmp/box/claude-<pid>.sync until `box clean`, to look at
+# what a session changed: base/ holds the state at start, copy/ what claude
+# left. Skills in the cross-agent ~/.agents/skills are readable.
 [binaries.claude]
 ro_binds = ["?~/.agents/skills"]
-rw_binds = ["?~/.claude", "?~/.claude.json", "?~/Library/Keychains"]
+rw_binds = ["?~/Library/Keychains"]
+sync_files = ["?~/.claude", "?~/.claude.json"]
 allow_hosts = [
   "*.anthropic.com", "claude.ai", "*.claude.ai", "*.claude.com",
 ]

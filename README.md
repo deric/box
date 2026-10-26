@@ -267,7 +267,7 @@ with `?` to skip silently.
 | `tmpfs`           | list              | fresh tmpfs mounts                                             |
 | `overlays`        | list              | `"path"` or `{ path, persist }`; `persist = false` discards writes on exit |
 | `copy_files`      | list              | host files copied into the sandbox (`--file`); changes made inside never reach the host |
-| `sync_files`      | list              | like `copy_files`, but the copy is written back over the host file when the command exits; if the host file changed meanwhile you are shown the diff and asked |
+| `sync_files`      | list              | like `copy_files`, but the copy is written back over the host file when the command exits; if the host file changed meanwhile you are shown the diff and asked (on macOS entries may be directories, see [macOS](#macos)) |
 | `drop_binds`      | list              | inherited entries to remove (binary sections only)             |
 | `network`         | bool              | share the host network; `false` gives an empty namespace (on macOS: no network but the proxy) |
 | `proxy`           | bool              | with `network = false`: reach `allow_hosts` through a proxy on the host |
@@ -459,7 +459,8 @@ the Linux sandbox as closely as Seatbelt allows:
 | `tmpfs`: empty, writable, discarded   | hidden: contents can be neither read nor written              |
 | `overlays`                            | read-only (with a warning)                                    |
 | `private_tmp`: own `/tmp`             | own `/tmp/box/<binary>-<pid>` in `TMPDIR`; the host's `/tmp` and `$TMPDIR` (and the sockets in them) are hidden |
-| `copy_files`, `sync_files`, `ssh`, `pasta` | not supported (warned and ignored; `pasta` falls back to the proxy) |
+| `sync_files`: a copy at the same path   | a copy under `/tmp/box/<binary>-<pid>.sync/copy/` (a clone on APFS; files or directories), the original hidden; `box _forward` on the host, the parent of `sandbox-exec`, writes it back when the command exits, directories file by file |
+| `copy_files`, `ssh`, `pasta`          | not supported (warned and ignored; `pasta` falls back to the proxy) |
 | `network = false`: own empty netns    | no IP traffic at all, loopback included                       |
 | `proxy`: unix socket bound into the sandbox, exposed on `127.0.0.1:3128` by the forwarder | the proxy listens on a loopback port of the host, the only address the sandbox may connect to; `HTTP_PROXY` and `HTTPS_PROXY` point at it, `NO_PROXY` is left unset |
 | `allow_hosts`, `log_dir`, `box top`   | the same: the proxy is the same program                       |
@@ -478,10 +479,41 @@ with the same `allow_hosts` as on Linux. Seatbelt cannot put another directory
 at `/tmp`, so programs that use a fixed path there instead of `$TMPDIR` fail
 until it is added to `rw_binds` and `private_tmp` is turned off, which also
 exposes the sockets of the host's `/tmp` (ssh-agent's, tmux's). Programs that expect a writable `$HOME` (caches, lock files) need the
-relevant paths added to `rw_binds`. Claude Code's section additionally exposes
-`~/Library/Keychains`, where its login is stored. Anything else a program needs
+relevant paths added to `rw_binds`. Anything else a program needs
 (a Mach service, an IOKit class) can be granted with `seatbelt_rules`, for
 example `'(allow mach-lookup (global-name "com.apple.pasteboard.1"))'`.
+
+### Claude Code on macOS
+
+Without overlays, Claude Code's `~/.claude` and `~/.claude.json` are
+`sync_files`: when `box run claude` starts they are copied (cloned, on APFS,
+so even a large `projects/` costs nothing) under
+`/tmp/box/claude-<pid>.sync/`, twice: `copy/` is what claude works on,
+`base/` an untouched twin that records the state at start. The originals are
+hidden from the sandbox and claude is pointed at the copy with
+`CLAUDE_CONFIG_DIR`, which also makes it keep `.claude.json` inside that
+directory, so the copy of `~/.claude.json` is placed there. `box _forward`
+runs on the host as the parent of `sandbox-exec` and, when claude exits,
+writes back what differs between `copy/` and `base/`: files added or changed
+are written over the host's (in place, keeping the inode and mode), files
+removed are removed, with a line saying how many. Files the sandbox left alone
+are not looked at, so a claude session on the host meanwhile loses nothing it
+wrote. A file both sides changed (`history.jsonl`, `.claude.json` after two
+sandboxes exit) is a conflict: the diff is shown and you are asked whether to
+overwrite the host's version or keep it, in which case the sandbox's copy is
+saved under `~/.local/state/box/sync/`, as on Linux. `~/Library/Keychains`,
+where claude's login is stored, is exposed read-write.
+
+The sync directory stays until `box clean` (`box df` counts it with the
+`/tmp` directories), so what a session changed can be inspected afterwards:
+
+```sh
+diff -r /tmp/box/claude-12345.sync/base /tmp/box/claude-12345.sync/copy
+```
+
+Other programs can be synced the same way, but have to be told where their
+copy is: `BOX_SYNC_DIR` inside names the `copy/` directory, under which each
+entry lies at its path relative to the home directory (`$BOX_SYNC_DIR/.config/gh`).
 
 ### Build caches on macOS
 
@@ -736,6 +768,9 @@ the same build in CI and attaches the artifacts to a GitHub release.
   across runs, without being written to the host directories; `box clean
   claude` drops it. Project skills in `.claude/skills` live under `$PWD` and
   are read-write like the rest of it.
+  On macOS, where a copy cannot be placed at the original's path, the
+  whole of `~/.claude` is a `sync_files` entry instead, written back file
+  by file; see [Claude Code on macOS](#claude-code-on-macos).
 - A program that updates itself inside the sandbox may stop starting there.
   claude installs a new version under `~/.local/share/claude/versions`, in
   the tmpfs `$HOME` that is gone on exit, and repoints the `~/.local/bin/claude`

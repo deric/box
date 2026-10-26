@@ -19,17 +19,26 @@ import (
 // to overwrite the host file or to keep it and save the copy aside to merge
 // by hand, with answers read from in. Without one the host file is kept and
 // the copy saved. Copies are saved under saveDir, the directory bound from
-// hostDir on the host, which is what the user is told.
+// hostDir on the host, which is what the user is told. A copy the sandbox
+// removed has nothing to save: the host file is removed or kept.
 func resolveConflicts(conflicts []sandbox.Conflict, ask bool, in io.Reader, out io.Writer, saveDir, hostDir string) {
 	r := bufio.NewReader(in)
 	for _, c := range conflicts {
-		say(out, "box: %s changed on the host while the sandbox ran, and the sandbox changed its copy:\n", c.File.Path)
-		if err := diff.Write(out, c.File.Path+" (host)", c.File.Path+" (sandbox)", c.Host, c.Copy); err != nil {
+		name := c.File.Name()
+		switch {
+		case c.Removed:
+			say(out, "box: %s changed on the host while the sandbox ran, and the sandbox removed its copy:\n", name)
+		case c.Gone:
+			say(out, "box: %s was removed on the host while the sandbox ran, and the sandbox changed its copy:\n", name)
+		default:
+			say(out, "box: %s changed on the host while the sandbox ran, and the sandbox changed its copy:\n", name)
+		}
+		if err := diff.Write(out, name+" (host)", name+" (sandbox)", c.Host, c.Copy); err != nil {
 			say(out, "box: %v\n", err)
 		}
 		overwrite := false
 		if ask {
-			overwrite = askOverwrite(r, out, c.File.Path)
+			overwrite = askOverwrite(r, out, name, c.Removed)
 		} else {
 			say(out, "box: warning: no terminal to ask; keeping the host file\n")
 		}
@@ -39,12 +48,16 @@ func resolveConflicts(conflicts []sandbox.Conflict, ask bool, in io.Reader, out 
 			}
 			continue
 		}
-		name, err := c.Save(saveDir, time.Now())
+		if c.Removed {
+			say(out, "box: kept %s\n", name)
+			continue
+		}
+		saved, err := c.Save(saveDir, time.Now())
 		if err != nil {
 			say(out, "box: %v\n", err)
 			continue
 		}
-		say(out, "box: kept %s; the sandbox copy is saved as %s to merge by hand\n", c.File.Path, filepath.Join(hostDir, name))
+		say(out, "box: kept %s; the sandbox copy is saved as %s to merge by hand\n", name, filepath.Join(hostDir, saved))
 	}
 }
 
@@ -55,14 +68,19 @@ func say(out io.Writer, format string, args ...any) {
 }
 
 // askOverwrite puts the question for path and reads the answer: true to
-// overwrite, false (the default, also on end of input) to keep and save.
-func askOverwrite(r *bufio.Reader, out io.Writer, path string) bool {
+// overwrite (or, with remove, to remove the host file as the sandbox did),
+// false (the default, also on end of input) to keep and save.
+func askOverwrite(r *bufio.Reader, out io.Writer, path string, remove bool) bool {
 	for {
-		say(out, "box: overwrite %s with the sandbox copy? No keeps it and saves the copy aside to merge by hand. [y/N] ", path)
+		if remove {
+			say(out, "box: remove %s as the sandbox did? No keeps it. [y/N] ", path)
+		} else {
+			say(out, "box: overwrite %s with the sandbox copy? No keeps it and saves the copy aside to merge by hand. [y/N] ", path)
+		}
 		line, err := r.ReadString('\n')
 		answer := strings.ToLower(strings.TrimSpace(line))
 		switch answer {
-		case "y", "yes", "o", "overwrite":
+		case "y", "yes", "o", "overwrite", "r", "remove":
 			return true
 		case "", "n", "no", "k", "keep", "m", "merge":
 			return false
