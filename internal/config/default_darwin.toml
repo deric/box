@@ -104,7 +104,7 @@ dns = true
 log_dir = "/tmp/box"
 allow_hosts = [
   "api.dagger.cloud", "apt.voxpupuli.org",
-  "*.centos.org", "crates.io", "*.crates.io", "crt.sh",
+  "*.centos.org", "crates.io", "*.crates.io", "crt.sh", "cilium.io"
   "*.debian.org", "dl.google.com",
   "files.pythonhosted.org", "forge.puppet.com", "forgeapi.puppet.com",
   "hex.pm",
@@ -112,7 +112,7 @@ allow_hosts = [
   "go.dev", "*.golang.org", "pypi.org",
   "icinga.com", "index.rubygems.org",
   "orca.security", "openwall.com",
-  "hub.docker.io",
+  "helm.cilium.io", "hub.docker.io",
   "kernel.org", "*.kernel.org",
   "mise-versions.jdx.dev", "mise.jdx.dev",
   "nginx.org","nvd.nist.gov",
@@ -123,7 +123,7 @@ allow_hosts = [
   "pkgs.org", "production.cloudflare.docker.com",
   "quay.io", "*.quay.io", "ghcr.io",
   "registry.fedoraproject.org", "registry.access.redhat.com", "repology.org",
-  "www.securityfocus.com", "*.sigstore.dev", "sigstore.dev",
+  "www.securityfocus.com", "*.sigstore.dev", "sigstore.dev", "skyhook-io.github.io",
   # Homebrew
   "formulae.brew.sh", "*.brew.sh",
 ]
