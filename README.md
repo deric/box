@@ -625,7 +625,10 @@ release and is what other agent sandboxes build on.
 `box doctor` checks all of this on the host it runs on: it looks for
 `bwrap` (or `sandbox-exec`) and its version, starts an empty sandbox (on
 macOS also one under the proxy's network rules) and
-mounts an overlay inside one, probes `unshare` for DNS and the systemd user
+mounts an overlay inside one, starts podman's pause process inside one
+where a profile has `podman = true` (Ubuntu 26.04's AppArmor profile for
+`bwrap` denies the nested namespace every capability, which the check
+explains how to replace), probes `unshare` for DNS and the systemd user
 manager and its delegated controllers for limits, loads the configuration
 and the profiles, makes sure the state directory and `/tmp/box` are
 writable, and looks for the binaries the configuration has sections for,

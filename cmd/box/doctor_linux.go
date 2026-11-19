@@ -20,8 +20,9 @@ const probeTimeout = 10 * time.Second
 // platformChecks covers bubblewrap and the kernel and systemd features a
 // Linux sandbox relies on: user namespaces, unprivileged overlayfs for
 // overlays, unshare(1) for DNS, pasta(1) and nft(8) for the pasta backend
-// and the systemd user manager for resource limits. Probes that would fail
-// for a reason already reported are skipped.
+// and the systemd user manager for resource limits, and for podman the
+// nested namespace its pause process lives in. Probes that would fail for
+// a reason already reported are skipped.
 func platformChecks(u features) []check {
 	var checks []check
 	r := sandbox.LookupRunner()
@@ -40,6 +41,9 @@ func platformChecks(u features) []check {
 			checks = append(checks, ch)
 			if ch.status == statusOK && u.overlays && (r.Version == "" || versionAtLeast(r.Version, "0.10")) {
 				checks = append(checks, probeOverlay(r.Exe))
+			}
+			if ch.status == statusOK && u.podman {
+				checks = append(checks, probePause(r.Exe))
 			}
 		}
 		if u.dns {
@@ -123,13 +127,89 @@ func probeOverlay(bwrap string) check {
 	return check{"overlays", statusFail, "bwrap cannot mount an overlay: " + err.Error(), strings.Join(fixes, "\n")}
 }
 
+// probePause starts podman's pause process inside an empty sandbox with
+// user namespaces left enabled, as a podman = true profile does (see
+// sandbox.StartPause and box _probe): a user and mount namespace nested in
+// the sandbox's. Ubuntu 26.04's bubblewrap package ships an AppArmor
+// profile (bwrap-userns-restrict) that lets bwrap's children create user
+// namespaces but denies them every capability, so the mount namespace, and
+// everything podman mounts, is refused with EPERM.
+func probePause(bwrap string) check {
+	self, err := os.Executable()
+	if err != nil {
+		return check{"podman namespace", statusWarn, "cannot find the box binary: " + err.Error(), ""}
+	}
+	err = runBwrapCommand(bwrap, []string{"--unshare-all", "--unshare-user", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"}, self, "_probe")
+	if err == nil {
+		return check{"podman namespace", statusOK, "a sandbox can start podman's pause process (nested user and mount namespace)", ""}
+	}
+	return check{"podman namespace", statusWarn, "a sandbox cannot start podman's pause process, so podman cannot run inside: " + err.Error(),
+		pauseHint(bwrap, err) + "\nor set podman = false"}
+}
+
+// bwrapProfile is the AppArmor profile Ubuntu's bubblewrap package ships,
+// which confines bwrap's children.
+const bwrapProfile = "/etc/apparmor.d/bwrap-userns-restrict"
+
+// pauseHint explains why the nested namespace could not be created: the
+// stacked bwrap profile when the host has it loaded, otherwise whatever
+// keeps user namespaces from being created at all.
+func pauseHint(bwrap string, err error) string {
+	if profileDeniesCapabilities(bwrapProfile) && sysctl("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") == "1" {
+		return strings.Join([]string{
+			"AppArmor confines bwrap's children with the unpriv_bwrap profile from " + bwrapProfile + ", which denies them every capability (its deny rule cannot be overridden from local/), so the nested mount namespace podman needs is refused;",
+			"replace it with the permissive profile Ubuntu 24.04 shipped, which keeps the restriction for everything else:",
+			"  sudo ln -s " + bwrapProfile + " /etc/apparmor.d/disable/",
+			"  sudo apparmor_parser -R " + bwrapProfile,
+			"  sudo tee /etc/apparmor.d/bwrap <<'EOF'",
+			"  abi <abi/4.0>,",
+			"  include <tunables/global>",
+			"  profile bwrap " + bwrap + " flags=(unconfined) {",
+			"    userns,",
+			"  }",
+			"  EOF",
+			"  sudo apparmor_parser -r /etc/apparmor.d/bwrap",
+			"note that sandboxed programs may then create user namespaces with capabilities of their own inside, which podman relies on; profiles with disable_userns = true keep blocking them",
+		}, "\n")
+	}
+	return usernsHint(err)
+}
+
+// profileDeniesCapabilities reports whether the AppArmor profile at path
+// denies capabilities to the processes it confines (a `deny capability`
+// rule), as Ubuntu 26.04's bwrap-userns-restrict does to bwrap's children.
+func profileDeniesCapabilities(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Fields(strings.TrimSuffix(line, ","))
+		if len(f) >= 2 && f[len(f)-2] == "deny" && f[len(f)-1] == "capability" {
+			return true
+		}
+	}
+	return false
+}
+
 // runBwrap runs `bwrap --ro-bind / / <args> true` and returns what bwrap
 // complained about, if anything.
 func runBwrap(bwrap string, args ...string) error {
+	return runBwrapCommand(bwrap, args, "true")
+}
+
+// runBwrapCommand runs command inside `bwrap --ro-bind / / <args>` and
+// returns what bwrap or the command complained about, if anything.
+func runBwrapCommand(bwrap string, args []string, command ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
 	argv := append([]string{"--ro-bind", "/", "/", "--die-with-parent"}, args...)
-	argv = append(argv, "true")
+	argv = append(argv, "--")
+	argv = append(argv, command...)
 	out, err := exec.CommandContext(ctx, bwrap, argv...).CombinedOutput()
 	if err == nil {
 		return nil
@@ -138,7 +218,8 @@ func runBwrap(bwrap string, args ...string) error {
 	if msg == "" {
 		msg = err.Error()
 	}
-	return errors.New(strings.TrimPrefix(msg, "bwrap: "))
+	msg = strings.TrimPrefix(msg, "bwrap: ")
+	return errors.New(strings.TrimPrefix(msg, "box: "))
 }
 
 // usernsHint explains why unprivileged user namespaces may be unavailable
