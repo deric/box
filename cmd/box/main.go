@@ -24,9 +24,9 @@ import (
 	"github.com/deric/box/internal/sandbox"
 )
 
-// The _proxy, _forward, _netns, _filter, _pause and _connect commands are
-// started by box itself (see internal/proxy and internal/sandbox) and are
-// not part of the documented interface.
+// The _proxy, _forward, _netns, _filter, _pause, _probe and _connect
+// commands are started by box itself (see internal/proxy, internal/sandbox
+// and box doctor) and are not part of the documented interface.
 
 // _netns drops its capabilities on the thread it then execs the runner
 // from, and the proxy's parent-death signal is bound to the thread box
@@ -102,6 +102,8 @@ func main() {
 		err = cmdFilter(os.Args[2:])
 	case "_pause":
 		sandbox.Pause()
+	case "_probe":
+		err = cmdProbe(os.Args[2:])
 	case "_connect":
 		err = cmdConnect(os.Args[2:])
 	case "version", "--version":

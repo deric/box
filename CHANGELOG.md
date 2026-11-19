@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `box doctor` starts podman's pause process inside an empty sandbox where
+  a profile has `podman = true`, and when the nested user and mount
+  namespace is refused says why and how to fix it: Ubuntu 26.04's
+  bubblewrap package ships an AppArmor profile (`bwrap-userns-restrict`)
+  that denies bwrap's children every capability, so podman cannot mount
+  anything inside; the check prints the permissive profile to replace it
+  with. The forwarder's warning about the pause process now points at
+  `box doctor`.
+
 ## [0.7.0] - 2026-10-26
 
 ### Added

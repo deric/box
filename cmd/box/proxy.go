@@ -354,7 +354,7 @@ func cmdForward(argv []string) error {
 			pause, err = sandbox.StartPause(self, *pausePid)
 		}
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "box: warning:", err)
+			fmt.Fprintln(os.Stderr, "box: warning:", err, "(box doctor explains)")
 		}
 	}
 
