@@ -21,7 +21,7 @@ func cmdProbe(argv []string) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	pause, err := sandbox.StartPause(self, filepath.Join(dir, "pause.pid"))
 	if err != nil {
 		return err
