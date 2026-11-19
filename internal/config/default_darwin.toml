@@ -104,7 +104,7 @@ dns = true
 log_dir = "/tmp/box"
 allow_hosts = [
   "api.dagger.cloud", "apt.voxpupuli.org",
-  "*.centos.org", "crates.io", "*.crates.io", "crt.sh", "cilium.io"
+  "*.centos.org", "crates.io", "*.crates.io", "crt.sh", "cilium.io",
   "*.debian.org", "dl.google.com",
   "files.pythonhosted.org", "forge.puppet.com", "forgeapi.puppet.com",
   "hex.pm",
